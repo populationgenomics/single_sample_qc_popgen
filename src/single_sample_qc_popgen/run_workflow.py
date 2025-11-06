@@ -13,8 +13,7 @@ from argparse import ArgumentParser
 
 from cpg_flow.workflow import run_workflow
 
-# TODO(you) import your own Stages
-from workflow_name.stages import DoSomethingGenericWithBash, PrintPreviousJobOutputInAPythonJob
+from single_sample_qc_popgen.stages import DragenCramMultiQC, DragenCramQC
 
 
 def cli_main():
@@ -32,9 +31,9 @@ def cli_main():
     # Otherwise all configuration should be done by providing all relevant configs to analysis-runner
     # https://github.com/populationgenomics/team-docs/blob/main/cpg_utils_config.md#config-in-analysis-runner-jobs
 
-    stages = [DoSomethingGenericWithBash, PrintPreviousJobOutputInAPythonJob]
+    stages = [DragenCramQC, DragenCramMultiQC]
 
-    run_workflow(stages=stages, dry_run=args.dry_run)
+    run_workflow(name='dragen_qc', stages=stages, dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

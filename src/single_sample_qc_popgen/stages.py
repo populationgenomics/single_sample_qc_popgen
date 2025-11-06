@@ -33,7 +33,7 @@ from hailtop.batch.job import BashJob, PythonJob
 from loguru import logger
 
 from single_sample_qc_popgen.jobs import check_multiqc, run_multiqc
-from single_sample_qc_popgen.utils import get_output_path, get_qc_path
+from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
 
 
 @stage(analysis_type='qc', analysis_keys=['json'])
@@ -67,7 +67,13 @@ class CheckMultiQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: dict[str, str] = self.expected_outputs(cohort=cohort, inputs=inputs)
 
-        qc_checks_job: PythonJob = check_multiqc.check_multiqc(
+        qc_checks_job: PythonJob = initialise_python_job(
+            job_name=f'Check {cohort.id} MultiQC Report',
+            target=cohort,
+            tool_name='Check MultiQC',
+        )
+        qc_checks_job.call(
+            check_multiqc.run,
             cohort=cohort,
             inputs=inputs,
             outputs=outputs,

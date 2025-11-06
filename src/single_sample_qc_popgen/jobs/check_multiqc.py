@@ -12,6 +12,7 @@ a channel with:
 """
 import json
 from collections import defaultdict
+from typing import Any
 
 from cpg_flow.stage import StageInput
 from cpg_flow.targets import Cohort
@@ -76,73 +77,115 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
             mapping[sg['id']] = sg['sample']['participant']['reportedSex']
     return mapping
 
-QC_MAPPING = {
-    'mean_coverage': {
-        'multiqc_report_name': 'Average sequenced coverage over genome',
-        'display_name': 'Mean Coverage',
-    },
-    'ploidy_estimation': {
-        'calculator': (
-            lambda d, sg_id, sex_mapping: (
-                d['Ploidy estimation'].count('X') == sex_mapping[sg_id],
-                sex_mapping[sg_id],
-            )
-        ),
-        'multiqc_report_name': 'Ploidy estimation',
-        'display_name': 'Ploidy Estimation',
-    },
-    'pct_genome_gt_20x': {
-        'multiqc_report_name': 'wgs pct of genome with coverage [20x:inf)',
-        'display_name': 'Pct Genome @ >20x',
-    },
-    'q30_bases': {
-        'multiqc_report_name': 'Q30 bases',
-        'display_name': 'Q30 Bases',
-    },
-    'contamination_verifybamid': {
-        'multiqc_report_name': 'FREEMIX',
-        'display_name': 'Contamination (VerifyBamID)',
-    },
-    'contamination_dragen': {
-        'multiqc_report_name': 'Estimated sample contamination',
-        'display_name': 'Contamination (DRAGEN)',
-    },
-    'mapping_rate_pct': {
-        'multiqc_report_name': 'Mapped reads pct',
-        'display_name': 'Mapping Rate (%)',
-    },
-    'duplication_rate_pct': {
-        'multiqc_report_name': 'Number of duplicate marked reads pct',
-        'display_name': 'Duplication Rate (%)',
-    },
-    'chimera_rate': {
-        'calculator': (
-            lambda d, _, __: (
-                d['Supplementary (chimeric) alignments'] / d['Total alignments'],
-                _,
-            )
-        ),
-        'display_name': 'Chimera Rate',
-    },
-    'mean_insert_size': {
-        'multiqc_report_name': 'Insert length: mean',
-        'display_name': 'Mean Insert Size',
-    },
-    'insert_size_sd': {
-        'multiqc_report_name': 'Insert length: standard deviation',
-        'display_name': 'Insert Size SD',
-    },
-    'ti_tv_ratio': {
-        'multiqc_report_name': 'Ti/Tv ratio',
-        'display_name': 'Ti/Tv Ratio (SNPs)',
-    },
-    'het_hom_ratio': {
-        'multiqc_report_name': 'Het/Hom ratio',
-        'display_name': 'Het/Hom Ratio',
-    },
-}
 
-def build_qc_thresholds(seq_type: str, config_key: str) -> dict[str, dict]:
+class QCChecker:
+    """
+    Encapsulates all logic for checking a MultiQC report for a cohort.
+    """
+
+    def __init__(self, cohort: Cohort, inputs: StageInput, outputs: dict[str, str]):
+        self.cohort = cohort
+        self.inputs = inputs
+        self.outputs = outputs
+        # Data to be loaded
+        self.cohort_sgs = self.cohort.get_sequencing_groups()
+        self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
+        self.multiqc_data = load_multiqc_data(cohort, inputs)
+        self.QC_MAPPING: dict[str, dict[str, Any]] = {
+            'mean_coverage': {
+                'multiqc_report_name': 'Average sequenced coverage over genome',
+                'display_name': 'Mean Coverage',
+            },
+            'ploidy_estimation': {
+                'calculator': self._calculate_ploidy,
+                'multiqc_report_name': 'Ploidy estimation',
+                'display_name': 'Ploidy Estimation',
+            },
+            'pct_genome_gt_20x': {
+                'multiqc_report_name': 'wgs pct of genome with coverage [20x:inf)',
+                'display_name': 'Pct Genome @ >20x',
+            },
+            'q30_bases': {
+                'multiqc_report_name': 'Q30 bases',
+                'display_name': 'Q30 Bases',
+            },
+            'contamination_verifybamid': {
+                'multiqc_report_name': 'FREEMIX',
+                'display_name': 'Contamination (VerifyBamID)',
+            },
+            'contamination_dragen': {
+                'multiqc_report_name': 'Estimated sample contamination',
+                'display_name': 'Contamination (DRAGEN)',
+            },
+            'mapping_rate_pct': {
+                'multiqc_report_name': 'Mapped reads pct',
+                'display_name': 'Mapping Rate (%)',
+            },
+            'duplication_rate_pct': {
+                'multiqc_report_name': 'Number of duplicate marked reads pct',
+                'display_name': 'Duplication Rate (%)',
+            },
+            'chimera_rate': {
+                'calculator': self._calculate_chimera_rate,
+                'display_name': 'Chimera Rate',
+            },
+            'mean_insert_size': {
+                'multiqc_report_name': 'Insert length: mean',
+                'display_name': 'Mean Insert Size',
+            },
+            'insert_size_sd': {
+                'multiqc_report_name': 'Insert length: standard deviation',
+                'display_name': 'Insert Size SD',
+            },
+            'ti_tv_ratio': {
+                'multiqc_report_name': 'Ti/Tv ratio',
+                'display_name': 'Ti/Tv Ratio (SNPs)',
+            },
+            'het_hom_ratio': {
+                'multiqc_report_name': 'Het/Hom ratio',
+                'display_name': 'Het/Hom Ratio',
+            },
+        }
+
+    def _calculate_ploidy(self, d: dict, sg_id: str, sex_mapping: dict[str, int])-> tuple[bool | None, str, str]:
+        """
+        Calculator for ploidy.
+        Returns: (value_to_check, raw_value_for_log, expected_value_for_log)
+        """
+        raw_ploidy = d.get('Ploidy estimation', 'Unknown')
+        expected_sex_num = sex_mapping.get(sg_id)
+
+        if expected_sex_num is None:
+            # Cannot check, but can log
+            return None, raw_ploidy, f"Unknown (no sex for {sg_id})"
+        if raw_ploidy == 'Unknown':
+            # Cannot check
+            return None, raw_ploidy, str(expected_sex_num)
+
+
+        is_match = raw_ploidy.count('X') == expected_sex_num
+
+        # Convert expected_sex_num to XX/XY
+        expected_ploidy = 'XX' if expected_sex_num == 2 else 'XY'
+
+        return is_match, raw_ploidy, expected_ploidy
+
+    def _calculate_chimera_rate(
+        self, d: dict, _: str, __: dict
+    ) -> tuple[float | None, str, str | None]:
+        """
+        Calculator for chimera rate.
+        Returns: (value_to_check, raw_value_for_log, expected_value_for_log)
+        """
+        try:
+            val = d['Supplementary (chimeric) alignments'] / d['Total alignments']
+            # No raw value or expected value, so return val and None
+            return val, f"{val:.4f}", None
+        except (KeyError, ZeroDivisionError, TypeError):
+            return None, "N/A", None
+
+
+def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -> dict[str, dict]:
     """
     Build a dictionary of desired QC thresholds from config.
     Example config structure:
@@ -159,10 +202,10 @@ def build_qc_thresholds(seq_type: str, config_key: str) -> dict[str, dict]:
     threshold_d = get_config()['qc_thresholds'].get(seq_type, {}).get(config_key, {})
     qc_thresholds = {}
     for metric, threshold in threshold_d.items():
-        if metric in QC_MAPPING:
+        if metric in qc_checker.QC_MAPPING:
             qc_thresholds[metric] = {
                 'threshold': threshold,
-                **QC_MAPPING[metric],
+                **qc_checker.QC_MAPPING[metric],
             }
         else:
             logger.warning(
@@ -176,100 +219,198 @@ def build_qc_thresholds(seq_type: str, config_key: str) -> dict[str, dict]:
             }
     return qc_thresholds
 
+def load_multiqc_data(cohort: Cohort, inputs: StageInput) -> dict[str, Any]:
+    """Loads the MultiQC JSON data from the input stage."""
+    from single_sample_qc_popgen.stages import RunMultiQc  # noqa: PLC0415
 
-def check_multiqc(
+    json_path = inputs.as_path(
+        target=cohort, stage=RunMultiQc, key='multiqc_json'
+    )
+    logger.info(f"Loading MultiQC data from: {json_path}")
+    with json_path.open() as f:
+        data: dict[str, Any] = json.load(f)
+        if not isinstance(data, dict) or data is None:
+            raise ValueError("Invalid MultiQC data format.")
+        return data.get('report_general_stats_data', {})
+
+def get_metric_value(
+        qc_checker: QCChecker,
+        metric_config: dict,
+        val_by_metric: dict,
+        sg_id: str,
+    ) -> tuple[Any, str, str | None]:
+        """
+        Gets the metric value, either from a calculator or direct lookup.
+        Returns: (value_to_check, raw_value_for_log, expected_value_for_log)
+        """
+        if 'calculator' in metric_config:
+            # Use the calculator function
+            return metric_config['calculator'](
+                val_by_metric, sg_id, qc_checker.sex_mapping
+            )
+
+        # Default: Direct lookup
+        val = val_by_metric.get(metric_config['multiqc_report_name'])
+        return val, str(val), None
+
+def format_log_line(
+        display_name: str,
+        val_to_check: Any,
+        threshold: Any,
+        sign: str,
+        check_type: str,
+        raw_val_for_log: str,
+        expected_val_for_log: str | None,
+    ) -> str:
+        """Formats the log line based on the check type."""
+        if check_type == 'equality' and isinstance(val_to_check, bool):
+            # Special format for boolean checks (like ploidy)
+            return (
+                f'{display_name} is {raw_val_for_log} '
+                f'(expected {expected_val_for_log})'
+            )
+        # Standard format for numeric checks
+        try:
+            return f'{display_name}={val_to_check:.4f} {sign} {threshold:.4f}'
+        except (ValueError, TypeError):
+            # Fallback for non-numeric values
+            return f'{display_name}={val_to_check} {sign} {threshold}'
+
+def write_failures_to_json(bad_lines_by_sample: dict[str, list[str]], outputs: dict[str, str]) -> None:
+        """Writes all failed sample logs to a JSON file."""
+        output_path = outputs['failed_samples']
+        logger.warning(
+            f'Writing {len(bad_lines_by_sample)} failed sample(s) to {output_path}'
+        )
+        with to_path(output_path).open('w') as f:
+                json.dump(bad_lines_by_sample, f, indent=4)
+
+def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, inputs: StageInput) -> None:
+    """Constructs and sends the final Slack message."""
+    from single_sample_qc_popgen.stages import RunMultiQc  # noqa: PLC0415
+
+    num_failed = len(bad_lines_by_sample)
+    num_total_sgs = len(qc_checker.cohort_sgs)
+
+    # 1. Check for high failure rate
+    high_failure_message = None
+    if num_total_sgs > 0 and (num_failed / num_total_sgs) > 0.05:
+        failure_percent = (num_failed / num_total_sgs) * 100
+        high_failure_message = (
+            '=================================\n'
+            '🚨 ALERT: High QC Failure Rate 🚨\n'
+            '=================================\n'
+            f'**Failure Rate:** {num_failed} out of {num_total_sgs} ({failure_percent:.2f}%)'
+        )
+
+    # 2. Construct the main message
+    html_path = str(inputs.as_path(
+        target=qc_checker.cohort, stage=RunMultiQc, key='multiqc_report'
+    ))
+
+    title = f'*[{qc_checker.cohort.id}]* <{html_path}|{"MultiQC report"}>'
+    messages = []
+
+    if high_failure_message:
+        messages.append(high_failure_message)
+
+    if num_failed > 0:
+        messages.append(f'{title}. {num_failed} samples are flagged:')
+        for sg_id, bad_lines in bad_lines_by_sample.items():
+            messages.append(f'❗ {sg_id}: ' + ', '.join(bad_lines))
+    else:
+        messages.append(f'✅ {title}')
+
+    text = '\n'.join(messages)
+    logger.info(text)
+
+    # 3. Send to Slack if enabled
+    if config_retrieve(['workflow', 'multiqc', 'send_to_slack'], default=True):
+        send_message(text)
+    else:
+        logger.info('Skipping Slack notification as per config.')
+
+
+def run(
     cohort: Cohort,
     inputs: StageInput,
     outputs: dict[str, str],
 ):
-    from single_sample_qc_popgen.stages import RunMultiQc  # noqa: PLC0415
+
+    qc_checker = QCChecker(cohort, inputs, outputs)
 
     seq_type = get_config()['workflow']['sequencing_type']
 
-    cohort_sgs = cohort.get_sequencing_groups()
-    reported_sex_mapping_dict: dict[str, int] = get_sgid_reported_sex_mapping(cohort)
-
-    with inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_json').open() as f:
-        d = json.load(f)
-        sections = d['report_general_stats_data']
-
+    # Run checks
     bad_lines_by_sample = defaultdict(list)
-    for check_type, fail_sign, good_sign, is_fail in [
+    check_definitions =  [
         ('min', '<', '≥', lambda val, thresh: val < thresh),
         ('max', '>', '≤', lambda val, thresh: val > thresh),
         ('equality', '!=', '==', lambda val, thresh: val != thresh),
-    ]:
-        threshold_d = build_qc_thresholds(seq_type, check_type)
-        for section_data in sections.values():
+    ]
+    for check_type, fail_sign, good_sign, is_fail in check_definitions:
+        # 1. Build thresholds for this check type (min, max, or equality)
+        threshold_map = build_qc_thresholds(seq_type, check_type, qc_checker)
+
+        # 2. Iterate through MultiQC data sections
+        for section_data in qc_checker.multiqc_data.values():
+            # 3. Iterate through each sample in the section
             for sg_id, val_by_metric in section_data.items():
-                for metric_config in threshold_d.values():
-                    val = None
+                # 4. Iterate through each metric to check
+                for metric_config in threshold_map.values():
+                    # 5. Get the value for the metric
                     # DRAGEN does not provide pct chimeras directly, so we calculate it
                     # Also, ploidy estimation needs custom calculation
-                    if 'calculator' in metric_config:
-                        try:
-                            val, expected = metric_config['calculator'](val_by_metric, sg_id, reported_sex_mapping_dict)
-                        except (KeyError, ZeroDivisionError):
-                            continue
-                    elif 'multiqc_report_name' in metric_config:
-                        val = val_by_metric.get(metric_config['multiqc_report_name'])
+                    (
+                        val_to_check,
+                        raw_val_for_log,
+                        expected_val_for_log,
+                    ) = get_metric_value(qc_checker, metric_config, val_by_metric, sg_id)
 
-                    if val is None:
+                    if val_to_check is None:
+                        # Metric not found or calculation failed
                         continue
 
                     threshold = metric_config['threshold']
                     display_name = metric_config['display_name']
 
-                    if is_fail(val, threshold):
-                        if isinstance(val, bool):
-                            line = f'{display_name} is {val_by_metric[metric_config["multiqc_report_name"]]} (expected {expected})'
-                        else:
-                            line = f'{display_name}={val:.4f} {fail_sign} {threshold:.4f}'
-
-                        bad_lines_by_sample[sg_id].append(line)
-                        logger.warning(f'❗ {sg_id}: {line}')
+                    # 6. Perform the check
+                    if is_fail(val_to_check, threshold):
+                        # --- FAILURE ---
+                        sign = fail_sign
+                        is_failure = True
+                        log_func = logger.warning
+                        log_symbol = '❗'
                     else:
-                        if isinstance(val, bool):
-                            line = f'{display_name} is {val_by_metric[metric_config["multiqc_report_name"]]} (expected {expected})'
+                        # --- SUCCESS ---
+                        sign = good_sign
+                        is_failure = False
+                        log_func = logger.info
+                        log_symbol = '✅'
+
+                     # 7. Format and log the result
+                        line = format_log_line(
+                            display_name,
+                            val_to_check,
+                            threshold,
+                            sign,
+                            check_type,
+                            raw_val_for_log,
+                            expected_val_for_log,
+                        )
+
+                        log_func(f'{log_symbol} {sg_id}: {line}')
+
+                        if is_failure:
+                            logger.warning(f'❗ {sg_id}: {line}')
+                            bad_lines_by_sample[sg_id].append(line)
                         else:
-                            line = f'{display_name}={val:.4f} {good_sign} {threshold:.4f}'
+                            logger.info(f'✅ {sg_id}: {line}')
 
-                        logger.info(f'✅ {sg_id}: {line}')
-    logger.info('')
+    logger.info('') # Newline for readability
 
+    # --- Post-checking steps ---
     if bad_lines_by_sample:
-        logger.info(f'Writing {len(bad_lines_by_sample)} failed sample(s) to {outputs["failed_samples"]}')
-        with to_path(outputs['failed_samples']).open('w') as f:
-            json.dump(bad_lines_by_sample, f, indent=2)
+        write_failures_to_json(bad_lines_by_sample, outputs)
+        post_to_slack(bad_lines_by_sample, qc_checker, inputs)
 
-    # Check percent of failed samples in cohort and log warning if >5%
-    high_failure_message = None
-    if (failure_percent := (len(bad_lines_by_sample) / len(cohort_sgs)) * 100) > 5.0:
-        high_failure_message = (
-            '=================================\n'
-            '🚨 ALERT: High QC Failure Rate 🚨\n'
-            '=================================\n'
-            f'**Failure Rate:** {len(bad_lines_by_sample)} out of {len(cohort_sgs)} ({failure_percent:.2f}%)'
-        )
-
-    # Constructing Slack message
-    html_url = str(inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_report'))
-
-    title = f'*[{cohort.id}]* <{html_url}|{"MultiQC report"}>'
-
-    messages = []
-    if high_failure_message:
-        messages.append(high_failure_message)
-
-    if bad_lines_by_sample:
-        messages.append(f'{title}. {len(bad_lines_by_sample)} samples are flagged:')
-        for sample, bad_lines in bad_lines_by_sample.items():
-            messages.append(f'❗ {sample}: ' + ', '.join(bad_lines))
-    else:
-        messages.append(f'✅ {title}')
-    text = '\n'.join(messages)
-    logger.info(text)
-
-    # Send to Slack if enabled
-    if config_retrieve(['workflow', 'multiqc', 'send_to_slack'], default=True):
-        send_message(text)

@@ -33,7 +33,7 @@ def cli_main():
 
     stages = [RunMultiQc, CheckMultiQc]
 
-    run_workflow(name='dragen_qc', stages=stages, dry_run=args.dry_run)
+    run_workflow(name='single_sample_qc_popgen', stages=stages, dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

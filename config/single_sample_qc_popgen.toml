@@ -27,6 +27,6 @@ chimera_rate = 0.03
 ploidy_estimation = true
 
 [slack]
-channel = '' # Channel ID to send notifications to, e.g. 'C12345678'
+channel = 'C09P4QCKNR1' # Slack channel ID for #popgen-pipeline-alerts
 token_secret_id = 'dragen-single-sample-qc'
 token_project_id = 'cpg-common'

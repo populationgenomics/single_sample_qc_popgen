@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """
 Batch jobs to run MultiQC.
 """

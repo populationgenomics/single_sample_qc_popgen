@@ -128,7 +128,7 @@ def load_json(path: cpg_utils.Path | str, extract_key: str | None = None) -> Any
 
     Args:
         path (Path | str): Path to the JSON file.
-        extract_key (str, optional): If provided, only return this specific 
+        extract_key (str, optional): If provided, only return this specific
                                      top-level key from the loaded dictionary.
                                      Defaults to None (returns everything).
 

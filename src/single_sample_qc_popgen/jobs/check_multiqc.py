@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """
 Checks metrics in MultiQC output, based on thresholds in the qc_thresholds
 config section.
@@ -167,7 +165,7 @@ class QCChecker:
         is_match = raw_ploidy.count('X') == expected_sex_num
 
         # Convert expected_sex_num to XX/XY
-        expected_ploidy = 'XX' if expected_sex_num == 2 else 'XY'
+        expected_ploidy = 'XX' if expected_sex_num == 2 else 'XY' # noqa: PLR2004
 
         return is_match, raw_ploidy, expected_ploidy
 
@@ -281,7 +279,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
 
     # 1. Check for high failure rate
     high_failure_message = None
-    if num_total_sgs > 0 and (num_failed / num_total_sgs) > 0.05:
+    if num_total_sgs > 0 and (num_failed / num_total_sgs) > 0.05: # noqa: PLR2004
         failure_percent = (num_failed / num_total_sgs) * 100
         high_failure_message = (
             '=================================\n'
@@ -404,4 +402,3 @@ def run(
     if bad_lines_by_sample:
         write_failures_to_json(bad_lines_by_sample, outputs)
         post_to_slack(bad_lines_by_sample, qc_checker, inputs)
-

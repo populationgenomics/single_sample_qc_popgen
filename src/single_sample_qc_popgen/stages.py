@@ -22,6 +22,8 @@ Each Stage should be a Class, and should inherit from one of
 """
 
 
+from typing import TYPE_CHECKING
+
 from cpg_flow.stage import (
     CohortStage,
     StageInput,
@@ -29,9 +31,10 @@ from cpg_flow.stage import (
     stage,
 )
 from cpg_flow.targets import Cohort
-from hailtop.batch.job import BashJob, PythonJob
 from loguru import logger
 
+if TYPE_CHECKING:
+    from hailtop.batch.job import BashJob, PythonJob
 from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, run_multiqc
 from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
 
@@ -44,7 +47,7 @@ class RunMultiQc(CohortStage):
             'multiqc_report': str(get_qc_path(filename=f'{cohort.name}_multiqc_report.html', category='web')),
         }
 
-    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002
         outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
 
         multiqc_job: BashJob | None = run_multiqc.run_multiqc(
@@ -61,7 +64,7 @@ class RunMultiQc(CohortStage):
 
 @stage(required_stages=[RunMultiQc])
 class CheckMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]:
+    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]: # noqa: ARG002
         return {'failed_samples': str(get_output_path(filename=f'{cohort.name}_failed_samples.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
@@ -85,7 +88,8 @@ class CheckMultiQc(CohortStage):
 @stage(required_stages=[RunMultiQc, CheckMultiQc])
 class RegisterQcMetricsToMetamist(CohortStage):
     """
-    Registers QC metrics from MultiQC in the sequencing group 'meta' field in Metamist. The following metrics are registered:
+    Registers QC metrics from MultiQC in the sequencing group 'meta' field in Metamist.
+    The following metrics are registered:
         contamination_dragen: float
         mean_coverage: float
         median_coverage: float
@@ -106,11 +110,10 @@ class RegisterQcMetricsToMetamist(CohortStage):
     Optionally deactivates sequencing groups that failed QC checks. Toggleable via the following config:
         workflow.multiqc.deactivate_sgs = true
     """
-    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]:
+    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]: # noqa: ARG002
         return {'.registered': str(get_output_path(filename=f'{cohort.name}_registered.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, str] = self.expected_outputs(cohort=cohort, inputs=inputs)
 
         register_qc_job: PythonJob = initialise_python_job(
             job_name=f'Register {cohort.id} QC Metrics',

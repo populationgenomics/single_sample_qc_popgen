@@ -158,7 +158,6 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
 def run(
     cohort: Cohort,
     inputs: StageInput,
-    outputs: dict[str, str],
 ):
 
     from single_sample_qc_popgen.stages import CheckMultiQc, RunMultiQc  # noqa: PLC0415

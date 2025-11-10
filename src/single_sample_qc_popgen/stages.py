@@ -84,6 +84,28 @@ class CheckMultiQc(CohortStage):
 
 @stage(required_stages=[RunMultiQc, CheckMultiQc])
 class RegisterQcMetricsToMetamist(CohortStage):
+    """
+    Registers QC metrics from MultiQC in the sequencing group 'meta' field in Metamist. The following metrics are registered:
+        contamination_dragen: float
+        mean_coverage: float
+        median_coverage: float
+        pct_genome_20x: float
+        pct_q30_bases: float
+        pct_mapped_reads: float
+        pct_duplicate_reads: float
+        mean_insert_size: float
+        std_dev_insert_size: float
+        avg_gc_content: float
+        ploidy_estimation: str,
+        norm_x_coverage: float,
+        norm_y_coverage: float,
+        ti_tv_ratio: float,
+        het_hom_ratio: float,
+        qc_checks_failed: list[str]
+
+    Optionally deactivates sequencing groups that failed QC checks. Toggleable via the following config:
+        workflow.multiqc.deactivate_sgs = true
+    """
     def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]:
         return {'.registered': str(get_output_path(filename=f'{cohort.name}_registered.json'))}
 

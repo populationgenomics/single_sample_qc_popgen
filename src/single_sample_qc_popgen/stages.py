@@ -32,7 +32,7 @@ from cpg_flow.targets import Cohort
 from hailtop.batch.job import BashJob, PythonJob
 from loguru import logger
 
-from single_sample_qc_popgen.jobs import check_multiqc, run_multiqc
+from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, run_multiqc
 from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
 
 
@@ -80,3 +80,26 @@ class CheckMultiQc(CohortStage):
         )
 
         return self.make_outputs(target=cohort, data=outputs, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]
+
+
+@stage(required_stages=[RunMultiQc, CheckMultiQc])
+class RegisterQcMetricsToMetamist(CohortStage):
+    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]:
+        return {'.registered': str(get_output_path(filename=f'{cohort.name}_registered.json'))}
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: dict[str, str] = self.expected_outputs(cohort=cohort, inputs=inputs)
+
+        register_qc_job: PythonJob = initialise_python_job(
+            job_name=f'Register {cohort.id} QC Metrics',
+            target=cohort,
+            tool_name='Register QC Metrics',
+        )
+        register_qc_job.call(
+            register_qc_metamist.run,
+            cohort=cohort,
+            inputs=inputs,
+            outputs=outputs,
+        )
+
+        return self.make_outputs(target=cohort, data={}, jobs=register_qc_job)  # pyright: ignore[reportArgumentType]

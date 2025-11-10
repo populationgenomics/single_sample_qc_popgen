@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 from math import ceil
@@ -120,3 +121,45 @@ def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Pat
 def get_qc_path(filename: str, category: str | None = None) -> cpg_utils.Path:
     """Gets a path in the 'qc' directory."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/qc/{filename}', category=category))
+
+def load_json(path: cpg_utils.Path | str, extract_key: str | None = None) -> Any:
+    """
+    Generic function to load JSON data from a cpg_utils.path.
+
+    Args:
+        path (Path | str): Path to the JSON file.
+        extract_key (str, optional): If provided, only return this specific 
+                                     top-level key from the loaded dictionary.
+                                     Defaults to None (returns everything).
+
+    Returns:
+        Any: The loaded JSON data (or the specific sub-section).
+    """
+    # Ensure we have a Path object (supports cloud paths if using cpg_utils.Path)
+    if isinstance(path, str):
+        path = cpg_utils.to_path(path)
+
+    logger.info(f"Loading JSON data from: {path}")
+
+    try:
+        with path.open() as f:
+            data = json.load(f)
+    except FileNotFoundError:
+         logger.error(f"JSON file not found at: {path}")
+         raise
+    except json.JSONDecodeError:
+         logger.error(f"Failed to decode JSON from: {path}")
+         raise
+
+    if extract_key:
+        if not isinstance(data, dict):
+             logger.warning(
+                 f"Requested key '{extract_key}' cannot be extracted: "
+                 f"loaded data from {path} is not a dictionary."
+             )
+             return data
+
+        # Use .get() to avoid KeyErrors if the specific key is missing in a valid JSON
+        return data.get(extract_key, {})
+
+    return data

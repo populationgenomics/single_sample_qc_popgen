@@ -22,6 +22,9 @@ from cpg_utils.slack import send_message
 from loguru import logger
 from metamist.graphql import gql, query
 
+from single_sample_qc_popgen.stages import RunMultiQc
+from single_sample_qc_popgen.utils import load_json
+
 REPORTED_SEX_QUERY = gql(
     """
     query MyQuery($cohortId: String!) {
@@ -82,15 +85,13 @@ class QCChecker:
     """
     Encapsulates all logic for checking a MultiQC report for a cohort.
     """
-
-    def __init__(self, cohort: Cohort, inputs: StageInput, outputs: dict[str, str]):
+    # Now accepts multiqc_data directly, rather than finding it itself
+    def __init__(self, cohort: Cohort, multiqc_data: dict, outputs: dict[str, str]):
         self.cohort = cohort
-        self.inputs = inputs
         self.outputs = outputs
-        # Data to be loaded
         self.cohort_sgs = self.cohort.get_sequencing_groups()
         self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
-        self.multiqc_data = load_multiqc_data(cohort, inputs)
+        self.multiqc_data = multiqc_data
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
             'mean_coverage': {
                 'multiqc_report_name': 'Average sequenced coverage over genome',
@@ -219,20 +220,6 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
             }
     return qc_thresholds
 
-def load_multiqc_data(cohort: Cohort, inputs: StageInput) -> dict[str, Any]:
-    """Loads the MultiQC JSON data from the input stage."""
-    from single_sample_qc_popgen.stages import RunMultiQc  # noqa: PLC0415
-
-    json_path = inputs.as_path(
-        target=cohort, stage=RunMultiQc, key='multiqc_json'
-    )
-    logger.info(f"Loading MultiQC data from: {json_path}")
-    with json_path.open() as f:
-        data: dict[str, Any] = json.load(f)
-        if not isinstance(data, dict) or data is None:
-            raise ValueError("Invalid MultiQC data format.")
-        return data.get('report_general_stats_data', {})
-
 def get_metric_value(
         qc_checker: QCChecker,
         metric_config: dict,
@@ -336,8 +323,12 @@ def run(
     inputs: StageInput,
     outputs: dict[str, str],
 ):
-
-    qc_checker = QCChecker(cohort, inputs, outputs)
+    multiqc_json_path = inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_json')
+    multiqc_data = load_json(
+            multiqc_json_path,
+            extract_key='report_general_stats_data'
+        )
+    qc_checker = QCChecker(cohort, multiqc_data, outputs)
 
     seq_type = get_config()['workflow']['sequencing_type']
 

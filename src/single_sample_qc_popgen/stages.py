@@ -43,8 +43,8 @@ from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initiali
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
-            'multiqc_data': str(get_output_path(filename=f'{cohort.name}_multiqc_data.json')),
-            'multiqc_report': str(get_qc_path(filename=f'{cohort.name}_multiqc_report.html', category='web')),
+            'multiqc_data': str(get_output_path(filename=f'{cohort.id}_multiqc_data.json')),
+            'multiqc_report': str(get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web')),
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002
@@ -65,7 +65,7 @@ class RunMultiQc(CohortStage):
 @stage(required_stages=[RunMultiQc])
 class CheckMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        return {'failed_samples': str(get_output_path(filename=f'{cohort.name}_failed_samples.json'))}
+        return {'failed_samples': str(get_output_path(filename=f'{cohort.id}_failed_samples.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
@@ -111,7 +111,7 @@ class RegisterQcMetricsToMetamist(CohortStage):
         workflow.multiqc.deactivate_sgs = true
     """
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        return {'.registered': str(get_output_path(filename=f'{cohort.name}_registered.json'))}
+        return {'.registered': str(get_output_path(filename=f'{cohort.id}_registered.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
 

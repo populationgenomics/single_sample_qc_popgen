@@ -3,6 +3,8 @@ name = 'single_sample_qc_popgen'
 input_cohorts = ['COH0000']
 sequencing_type = 'genome'
 last_stages = ['RegisterQcMetricsToMetamist']
+reads_type = 'cram'
+
 
 
 [cramqc]

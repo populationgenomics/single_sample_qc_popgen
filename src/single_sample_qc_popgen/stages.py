@@ -64,11 +64,11 @@ class RunMultiQc(CohortStage):
 
 @stage(required_stages=[RunMultiQc])
 class CheckMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]: # noqa: ARG002
+    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
         return {'failed_samples': str(get_output_path(filename=f'{cohort.name}_failed_samples.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, str] = self.expected_outputs(cohort=cohort, inputs=inputs)
+        outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
 
         qc_checks_job: PythonJob = initialise_python_job(
             job_name=f'Check {cohort.id} MultiQC Report',

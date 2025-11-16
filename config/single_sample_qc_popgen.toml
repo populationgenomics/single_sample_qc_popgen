@@ -5,8 +5,6 @@ sequencing_type = 'genome'
 last_stages = ['RegisterQcMetricsToMetamist']
 reads_type = 'cram'
 
-
-
 [cramqc]
 assume_sorted = true
 num_pcs = 4
@@ -27,6 +25,9 @@ chimera_rate = 0.03
 
 [qc_thresholds.genome.equality]
 ploidy_estimation = true
+
+[ica.pipelines]
+dragen_version = 'dragen_3_7_8'
 
 [slack]
 channel = 'C09P4QCKNR1' # Slack channel ID for #popgen-pipeline-alerts

@@ -20,7 +20,6 @@ from cpg_utils.slack import send_message
 from loguru import logger
 from metamist.graphql import gql, query
 
-from single_sample_qc_popgen.stages import RunMultiQc
 from single_sample_qc_popgen.utils import load_json
 
 REPORTED_SEX_QUERY = gql(
@@ -321,6 +320,8 @@ def run(
     inputs: StageInput,
     outputs: dict[str, str],
 ):
+    from single_sample_qc_popgen.stages import RunMultiQc
+
     multiqc_json_path = inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_json')
     multiqc_data = load_json(
             multiqc_json_path,

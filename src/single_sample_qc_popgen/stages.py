@@ -36,7 +36,7 @@ from loguru import logger
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, run_multiqc
-from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
+from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job, load_json
 
 
 @stage()
@@ -120,10 +120,21 @@ class RegisterQcMetricsToMetamist(CohortStage):
             target=cohort,
             tool_name='Register QC Metrics',
         )
+
+        # Cannot pass a StageInput object (or a JobResourceFile from inputs.as_path())
+        # as an argument to a PythonJob's .call(). Load the JSONs within queue_jobs and pass the data instead.
+        multiqc_data = load_json(
+            inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_json'),
+            extract_key='report_general_stats_data'
+            )
+        failed_samples = load_json(
+            inputs.as_path(target=cohort, stage=CheckMultiQc, key='failed_samples'),
+        )
         register_qc_job.call(
             register_qc_metamist.run,
             cohort=cohort,
-            inputs=inputs,
+            failed_samples=failed_samples,
+            multiqc_data=multiqc_data,
         )
 
         return self.make_outputs(target=cohort, data={}, jobs=register_qc_job)  # pyright: ignore[reportArgumentType]

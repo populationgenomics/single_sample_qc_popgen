@@ -4,13 +4,10 @@ Batch jobs to run MultiQC.
 
 from typing import Any
 
-from cpg_flow.stage import StageInput
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve
 from loguru import logger
 from metamist.graphql import gql, query
-
-from single_sample_qc_popgen.utils import load_json
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -155,18 +152,9 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
 
 def run(
     cohort: Cohort,
-    inputs: StageInput,
+    failed_samples: dict[str, list[str]],
+    multiqc_data: dict[str, Any],
 ):
-
-    from single_sample_qc_popgen.stages import CheckMultiQc, RunMultiQc  # noqa: PLC0415
-    multiqc_data = load_json(
-        inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_json'),
-        extract_key='report_general_stats_data'
-    )
-    failed_samples = load_json(
-        inputs.as_path(target=cohort, stage=CheckMultiQc, key='failed_samples'),
-    )
-
     update_sg_qc_metrics(
         failed_samples=failed_samples,
         meta_to_update=multiqc_data,

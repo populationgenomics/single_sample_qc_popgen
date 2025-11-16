@@ -110,7 +110,7 @@ class RegisterQcMetricsToMetamist(CohortStage):
     Optionally deactivates sequencing groups that failed QC checks. Toggleable via the following config:
         workflow.multiqc.deactivate_sgs = true
     """
-    def expected_outputs(self, cohort: Cohort, inputs: StageInput) -> dict[str, str]: # noqa: ARG002
+    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
         return {'.registered': str(get_output_path(filename=f'{cohort.name}_registered.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:

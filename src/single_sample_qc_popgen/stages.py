@@ -39,7 +39,7 @@ from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, ru
 from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
 
 
-@stage(analysis_type='qc', analysis_keys=['json'])
+@stage()
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {

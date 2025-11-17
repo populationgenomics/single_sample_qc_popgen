@@ -4,7 +4,7 @@ Batch jobs to run MultiQC.
 
 from cpg_flow.targets import Cohort
 from cpg_utils import Path, to_path
-from cpg_utils.config import get_driver_image
+from cpg_utils.config import image_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
@@ -61,7 +61,7 @@ def run_multiqc(
         name='MultiQC',
         attributes=(cohort.get_job_attrs() or {}) | {'tool': 'MultiQC'},  # pyright: ignore[reportUnknownArgumentType]
     )
-    multiqc_job.image(image=get_driver_image())
+    multiqc_job.image(image=image_path('multiqc', '1.30-3'))
     multiqc_job.storage('10Gi')
 
     # Read all QC files into the job's input directory

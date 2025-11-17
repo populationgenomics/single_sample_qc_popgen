@@ -164,6 +164,7 @@ def run(
     )
     failed_samples = load_json(
         failed_samples_path,
+        allow_missing=True,
     )
 
     update_sg_qc_metrics(

@@ -5,6 +5,7 @@ from math import ceil
 from typing import Any
 
 import cpg_utils
+from cloudpathlib.exceptions import CloudPathFileNotFoundError
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
@@ -122,7 +123,7 @@ def get_qc_path(filename: str, category: str | None = None) -> cpg_utils.Path:
     """Gets a path in the 'qc' directory."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/qc/{filename}', category=category))
 
-def load_json(path: cpg_utils.Path | str, extract_key: str | None = None) -> Any:
+def load_json(path: cpg_utils.Path | str, extract_key: str | None = None, allow_missing: bool = False) -> Any:
     """
     Generic function to load JSON data from a cpg_utils.path.
 
@@ -131,6 +132,9 @@ def load_json(path: cpg_utils.Path | str, extract_key: str | None = None) -> Any
         extract_key (str, optional): If provided, only return this specific
                                      top-level key from the loaded dictionary.
                                      Defaults to None (returns everything).
+        allow_missing (bool, optional): If True, missing files will return
+                                        an empty dict instead of raising an error. Defaults to False.
+                                        To catch case where there are no failed samples.
 
     Returns:
         Any: The loaded JSON data (or the specific sub-section).
@@ -144,7 +148,13 @@ def load_json(path: cpg_utils.Path | str, extract_key: str | None = None) -> Any
     try:
         with path.open() as f:
             data = json.load(f)
-    except FileNotFoundError:
+    except (FileNotFoundError, CloudPathFileNotFoundError):
+         if allow_missing:
+            # Log a warning instead of an error and return default
+            logger.warning(f"File not found (as allowed): {path}. Returning empty dict.")
+            return {}  # <-- Return an empty dict
+
+         # If not allowed, re-raise the error as before
          logger.error(f"JSON file not found at: {path}")
          raise
     except json.JSONDecodeError:

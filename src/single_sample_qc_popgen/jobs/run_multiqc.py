@@ -94,6 +94,6 @@ def run_multiqc(
 
     # Write outputs to their final GCS locations
     b.write_output(multiqc_job.html, outputs['multiqc_report'])
-    b.write_output(multiqc_job.json, outputs['multiqc_data'])
+    b.write_output(multiqc_job.json, outputs['multiqc_json'])
 
     return multiqc_job

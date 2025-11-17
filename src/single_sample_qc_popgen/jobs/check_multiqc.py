@@ -317,14 +317,12 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
 
 def run(
     cohort: Cohort,
-    inputs: StageInput,
+    multiqc_data_path: str,
     outputs: dict[str, str],
 ):
-    from single_sample_qc_popgen.stages import RunMultiQc
 
-    multiqc_json_path = inputs.as_path(target=cohort, stage=RunMultiQc, key='multiqc_json')
     multiqc_data = load_json(
-            multiqc_json_path,
+            multiqc_data_path,
             extract_key='report_general_stats_data'
         )
     qc_checker = QCChecker(cohort, multiqc_data, outputs)

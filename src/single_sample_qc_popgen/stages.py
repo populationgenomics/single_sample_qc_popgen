@@ -75,10 +75,13 @@ class CheckMultiQc(CohortStage):
             target=cohort,
             tool_name='Check MultiQC',
         )
+
+        multiqc_data_path = inputs.as_path_by_target(stage=RunMultiQc, key='multiqc_json')
+
         qc_checks_job.call(
             check_multiqc.run,
             cohort=cohort,
-            inputs=inputs,
+            multiqc_data_path=multiqc_data_path,
             outputs=outputs,
         )
 

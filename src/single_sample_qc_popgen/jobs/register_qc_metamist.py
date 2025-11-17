@@ -4,7 +4,6 @@ Batch jobs to run MultiQC.
 
 from typing import Any
 
-import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve
 from loguru import logger
@@ -155,8 +154,8 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
 
 def run(
     cohort: Cohort,
-    multiqc_data_path: cpg_utils.Path | str,
-    failed_samples_path: cpg_utils.Path | str,
+    multiqc_data_path: str,
+    failed_samples_path: str,
 ):
 
     multiqc_data = load_json(

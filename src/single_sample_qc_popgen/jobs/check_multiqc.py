@@ -12,7 +12,6 @@ import json
 from collections import defaultdict
 from typing import Any
 
-from cpg_flow.stage import StageInput
 from cpg_flow.targets import Cohort
 from cpg_utils import to_path
 from cpg_utils.config import config_retrieve, get_config
@@ -269,9 +268,8 @@ def write_failures_to_json(bad_lines_by_sample: dict[str, list[str]], outputs: d
         with to_path(output_path).open('w') as f:
                 json.dump(bad_lines_by_sample, f, indent=4)
 
-def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, inputs: StageInput) -> None:
+def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_path: str) -> None:
     """Constructs and sends the final Slack message."""
-    from single_sample_qc_popgen.stages import RunMultiQc  # noqa: PLC0415
 
     num_failed = len(bad_lines_by_sample)
     num_total_sgs = len(qc_checker.cohort_sgs)
@@ -288,10 +286,6 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
         )
 
     # 2. Construct the main message
-    html_path = str(inputs.as_path(
-        target=qc_checker.cohort, stage=RunMultiQc, key='multiqc_report'
-    ))
-
     title = f'*[{qc_checker.cohort.id}]* <{html_path}|{"MultiQC report"}>'
     messages = []
 
@@ -318,6 +312,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
 def run(
     cohort: Cohort,
     multiqc_data_path: str,
+    multiqc_html_path: str,
     outputs: dict[str, str],
 ):
 
@@ -400,4 +395,4 @@ def run(
     # --- Post-checking steps ---
     if bad_lines_by_sample:
         write_failures_to_json(bad_lines_by_sample, outputs)
-        post_to_slack(bad_lines_by_sample, qc_checker, inputs)
+        post_to_slack(bad_lines_by_sample, qc_checker, multiqc_html_path)

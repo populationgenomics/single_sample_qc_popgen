@@ -43,7 +43,7 @@ from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initiali
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
-            'multiqc_data': str(get_output_path(filename=f'{cohort.id}_multiqc_data.json')),
+            'multiqc_json': str(get_output_path(filename=f'{cohort.id}_multiqc_data.json')),
             'multiqc_report': str(get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web')),
         }
 

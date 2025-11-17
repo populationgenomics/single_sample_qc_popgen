@@ -362,33 +362,27 @@ def run(
                         # --- FAILURE ---
                         sign = fail_sign
                         is_failure = True
-                        log_func = logger.warning
-                        log_symbol = '❗'
                     else:
                         # --- SUCCESS ---
                         sign = good_sign
                         is_failure = False
-                        log_func = logger.info
-                        log_symbol = '✅'
 
                      # 7. Format and log the result
-                        line = format_log_line(
-                            display_name,
-                            val_to_check,
-                            threshold,
-                            sign,
-                            check_type,
-                            raw_val_for_log,
-                            expected_val_for_log,
-                        )
+                    line = format_log_line(
+                        display_name,
+                        val_to_check,
+                        threshold,
+                        sign,
+                        check_type,
+                        raw_val_for_log,
+                        expected_val_for_log,
+                    )
 
-                        log_func(f'{log_symbol} {sg_id}: {line}')
-
-                        if is_failure:
-                            logger.warning(f'❗ {sg_id}: {line}')
-                            bad_lines_by_sample[sg_id].append(line)
-                        else:
-                            logger.info(f'✅ {sg_id}: {line}')
+                    if is_failure:
+                        logger.warning(f'❗ {sg_id}: {line}')
+                        bad_lines_by_sample[sg_id].append(line)
+                    else:
+                        logger.info(f'✅ {sg_id}: {line}')
 
     logger.info('') # Newline for readability
 

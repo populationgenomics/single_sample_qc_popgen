@@ -128,8 +128,8 @@ class RegisterQcMetricsToMetamist(CohortStage):
         register_qc_job.call(
             register_qc_metamist.run,
             cohort=cohort,
-            multiqc_data=multiqc_data_path,
-            failed_samples=failed_samples_path,
+            multiqc_data_path=multiqc_data_path,
+            failed_samples_path=failed_samples_path,
         )
 
         return self.make_outputs(target=cohort, data={}, jobs=register_qc_job)  # pyright: ignore[reportArgumentType]

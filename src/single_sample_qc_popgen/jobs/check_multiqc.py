@@ -268,7 +268,7 @@ def write_failures_to_json(bad_lines_by_sample: dict[str, list[str]], outputs: d
         with to_path(output_path).open('w') as f:
                 json.dump(bad_lines_by_sample, f, indent=4)
 
-def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_path: str) -> None:
+def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
     """Constructs and sends the final Slack message."""
 
     num_failed = len(bad_lines_by_sample)
@@ -286,7 +286,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
         )
 
     # 2. Construct the main message
-    title = f'*[{qc_checker.cohort.id}]* <{html_path}|{"MultiQC report"}>'
+    title = f'*[{qc_checker.cohort.id}]* <{html_url}|{"MultiQC report"}>'
     messages = []
 
     if high_failure_message:
@@ -315,6 +315,11 @@ def run(
     multiqc_html_path: str,
     outputs: dict[str, str],
 ):
+
+    if base_url := cohort.dataset.web_url():
+        # Construct HTML URL viewable in browser
+        html_url = str(multiqc_html_path).replace(str(cohort.dataset.web_prefix()), base_url)
+        logger.info(f'MultiQC report URL: {html_url}')
 
     multiqc_data = load_json(
             multiqc_data_path,
@@ -389,4 +394,4 @@ def run(
     # --- Post-checking steps ---
     if bad_lines_by_sample:
         write_failures_to_json(bad_lines_by_sample, outputs)
-        post_to_slack(bad_lines_by_sample, qc_checker, multiqc_html_path)
+        post_to_slack(bad_lines_by_sample, qc_checker, html_url)

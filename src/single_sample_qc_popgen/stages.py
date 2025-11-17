@@ -20,7 +20,7 @@ class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
             'multiqc_json': str(get_output_path(filename=f'{cohort.id}_multiqc_data.json')),
-            'multiqc_report': str(get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web')),
+            'multiqc_report_html': str(get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web')),
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002
@@ -56,7 +56,7 @@ class CheckMultiQc(CohortStage):
             check_multiqc.run,
             cohort=cohort,
             multiqc_data_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')),
-            multiqc_html_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_report')),
+            multiqc_html_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_report_html')),
             outputs=outputs,
         )
 

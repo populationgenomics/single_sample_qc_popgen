@@ -152,9 +152,8 @@ def load_json(path: cpg_utils.Path | str, extract_key: str | None = None, allow_
          if allow_missing:
             # Log a warning instead of an error and return default
             logger.warning(f"File not found (as allowed): {path}. Returning empty dict.")
-            return {}  # <-- Return an empty dict
+            return {}
 
-         # If not allowed, re-raise the error as before
          logger.error(f"JSON file not found at: {path}")
          raise
     except json.JSONDecodeError:

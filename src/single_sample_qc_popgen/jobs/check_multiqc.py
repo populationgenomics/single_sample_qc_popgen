@@ -3,10 +3,10 @@ Checks metrics in MultiQC output, based on thresholds in the qc_thresholds
 config section.
 
 Script can send a report to a Slack channel. To enable that, set SLACK_TOKEN
-and SLACK_CHANNEL environment variables, and add "Seqr Loader" app into
+and SLACK_CHANNEL environment variables, and add desired Slack app into
 a channel with:
 
-/invite @Seqr Loader
+/invite @<your-app-name>
 """
 import json
 from collections import defaultdict

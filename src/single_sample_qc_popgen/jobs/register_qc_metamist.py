@@ -1,5 +1,6 @@
 """
-Batch jobs to run MultiQC.
+Register QC metrics from MultiQC into Metamist.
+Options to deactivate sequencing groups that failed QC.
 """
 
 from typing import Any

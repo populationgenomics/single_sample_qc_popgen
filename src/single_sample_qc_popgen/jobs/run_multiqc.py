@@ -29,7 +29,7 @@ def run_multiqc(
         dragen_metric_prefixes.append(dragen_prefix)
 
         # 2. Get Somalier paths for each SG
-        somalier_path = get_output_path(filename=f'{sg.id}.somalier')
+        somalier_path = get_output_path(filename=f'somalier/{sg.id}.somalier')
         somalier_paths.append(somalier_path)
 
     # 3. Collect all individual Dragen CSV file paths

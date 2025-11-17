@@ -123,13 +123,13 @@ class RegisterQcMetricsToMetamist(CohortStage):
 
         # Cannot pass a StageInput object (or a JobResourceFile from inputs.as_path())
         # as an argument to a PythonJob's .call(). Load the JSONs within queue_jobs and pass the data instead.
-        multiqc_data_path = inputs.as_str(target=cohort, stage=RunMultiQc, key='multiqc_json')
-        failed_samples_path = inputs.as_str(target=cohort, stage=CheckMultiQc, key='failed_samples')
+        multiqc_data_path = inputs.as_path_by_target(stage=RunMultiQc, key='multiqc_json')
+        failed_samples_path = inputs.as_path_by_target(stage=CheckMultiQc, key='failed_samples')
         register_qc_job.call(
             register_qc_metamist.run,
             cohort=cohort,
-            multiqc_data_path=multiqc_data_path,
-            failed_samples_path=failed_samples_path,
+            multiqc_data_path=str(multiqc_data_path),
+            failed_samples_path=str(failed_samples_path),
         )
 
         return self.make_outputs(target=cohort, data={}, jobs=register_qc_job)  # pyright: ignore[reportArgumentType]

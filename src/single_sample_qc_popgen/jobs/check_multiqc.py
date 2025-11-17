@@ -282,7 +282,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
             '=================================\n'
             '🚨 ALERT: High QC Failure Rate 🚨\n'
             '=================================\n'
-            f'**Failure Rate:** {num_failed} out of {num_total_sgs} ({failure_percent:.2f}%)'
+            f'*Failure Rate:* {num_failed} out of {num_total_sgs} samples ({failure_percent:.2f}%)'
         )
 
     # 2. Construct the main message

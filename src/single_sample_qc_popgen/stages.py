@@ -79,8 +79,8 @@ class CheckMultiQc(CohortStage):
         qc_checks_job.call(
             check_multiqc.run,
             cohort=cohort,
-            multiqc_data_path=str(inputs.as_path_by_target(stage=RunMultiQc, key='multiqc_json')),
-            multiqc_html_path=str(inputs.as_path_by_target(stage=RunMultiQc, key='multiqc_report')),
+            multiqc_data_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')),
+            multiqc_html_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_report')),
             outputs=outputs,
         )
 

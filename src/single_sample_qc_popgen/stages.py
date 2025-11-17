@@ -132,4 +132,4 @@ class RegisterQcMetricsToMetamist(CohortStage):
             failed_samples_path=str(failed_samples_path),
         )
 
-        return self.make_outputs(target=cohort, data={}, jobs=register_qc_job)  # pyright: ignore[reportArgumentType]
+        return self.make_outputs(target=cohort, data=self.expected_outputs(cohort), jobs=register_qc_job)  # pyright: ignore[reportArgumentType]

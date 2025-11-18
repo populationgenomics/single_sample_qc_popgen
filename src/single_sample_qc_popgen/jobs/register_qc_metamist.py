@@ -3,6 +3,7 @@ Register QC metrics from MultiQC into Metamist.
 Options to deactivate sequencing groups that failed QC.
 """
 
+import json
 from typing import Any
 
 from cpg_flow.targets import Cohort, SequencingGroup
@@ -120,7 +121,7 @@ def build_sg_multiqc_meta_dict(multiqc_json: dict[str, Any]) -> dict[str, dict]:
 
     return extracted_data
 
-def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: dict[str, Any], cohort: Cohort):
+def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: dict[str, Any], cohort: Cohort, output: str):
     cohort_sgs: list[SequencingGroup] = cohort.get_sequencing_groups()
     meta_to_update = build_sg_multiqc_meta_dict(meta_to_update)
     logger.warning(f'Failed samples: {failed_samples}')
@@ -142,6 +143,10 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
         )
         logger.warning(f'Updated SG {sg.id}: {result_update_mutation}')
 
+    # Write out meta fields updated to json
+    with open(output, 'w') as f:
+        json.dump(meta_to_update, f, indent=4)
+
     # Deactivate sequencing groups that failed QC
     if config_retrieve(['workflow', 'multiqc']).get('deactivate_sgs', False):
         logger.warning(f'Deactivating failed samples: {list(failed_samples.keys())}')
@@ -157,6 +162,7 @@ def run(
     cohort: Cohort,
     multiqc_data_path: str,
     failed_samples_path: str,
+    output: str,
 ):
 
     multiqc_data = load_json(
@@ -172,4 +178,5 @@ def run(
         failed_samples=failed_samples,
         meta_to_update=multiqc_data,
         cohort=cohort,
+        output=output,
     )

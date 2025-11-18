@@ -25,9 +25,9 @@ The pipeline checks for the `dragen_metrics` QC metrics output of the `dragen_al
 
 The workflow performs the following steps:
 
-1. **Run MultiQC** on the DRAGEN metrics output for each sample to generate a consolidated QC report and json data file.
-2. **Check QC metrics** by parsing the MultiQC json data file to extract relevant QC metrics for each sample. The metrics are compared against predefined thresholds to determine if the sample passes or fails QC. Optionally send Slack notifications for samples that fail QC and deactivate them in metamist.
-3. **Register QC metrics in metamist** by storing the extracted QC metrics in the `meta` field of each sequencing group in metamist for future reference.
+1. **Run MultiQC: `RunMultiQc`** on the DRAGEN metrics output for each sample to generate a consolidated QC report and json data file.
+2. **Check QC metrics: `CheckMultiQc`** by parsing the MultiQC json data file to extract relevant QC metrics for each sample. The metrics are compared against predefined thresholds to determine if the sample passes or fails QC. Optionally send Slack notifications for samples that fail QC and deactivate them in metamist.
+3. **Register QC metrics in metamist: `RegisterQcMetricsToMetamist`** by storing the extracted QC metrics in the `meta` field of each sequencing group in metamist for future reference. If there were no failed samples, then `CheckMultiQc` will output an empty JSON file which is handled as such: `RegisterQcMetricsToMetamist` will read the empty JSON file and proceed to only register the QC metrics.
 
 ## Prerequisites
 
@@ -70,4 +70,13 @@ single_sample_qc_popgen
   * `--image`: The full path to the pipeline's Docker image. The example uses a `-dev` image, but production runs will use a production (i.e. no `-dev` image)
 
 
-  ## Pipeline Outputs
+## Pipeline Outputs
+When successful the pipeline will produce the following outputs:
+  * **RunMultiQc**
+      * `<cohort_id>_multiqc_report.html`: The MultiQC HTML report for the cohort.
+      * `<cohort_id>_multiqc_data.json`: The MultiQC JSON data file containing consolidated QC metrics.
+  * **CheckQcMetrics**
+      * `<cohort_id>_failed_samples.json`: A JSON file listing samples that failed QC checks along with the reasons for failure.
+        * Could be an empty JSON file if no samples failed QC.
+  * **RegisterQcMetricsToMetamist**
+      * `<cohort_id>_registered.json`: A JSON file summarising the QC metrics that were registered to metamist for each sequencing group.

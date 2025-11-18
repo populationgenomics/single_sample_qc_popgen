@@ -31,6 +31,7 @@ REPORTED_SEX_QUERY = gql(
             sample {
                 participant {
                     reportedSex
+                    meta
                 }
             }
         }
@@ -69,12 +70,43 @@ MUTATION_SEQUENCING_GROUP = gql(
 def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
     """
     Get a mapping of sequencing group ID to reported sex.
+    Preferentially uses 'participant_portal_reported_sex' from the
+    participant.meta field, and falls back to 'reportedSex'.
     """
     mapping: dict[str, int] = {}
     response = query(REPORTED_SEX_QUERY, variables={'cohortId': cohort.id})
     for coh in response['cohorts']:
-        for sg in coh   ['sequencingGroups']:
-            mapping[sg['id']] = sg['sample']['participant']['reportedSex']
+        for sg in coh['sequencingGroups']:
+            sg_id = sg['id']
+            participant = sg['sample']['participant']
+
+            preferred_sex = None
+            participant_meta = participant.get('meta')
+
+            # 1. Check for the preferred field first
+            if isinstance(participant_meta, dict):
+                preferred_sex = participant_meta.get('participant_portal_reported_sex')
+
+            # 2. If the preferred field exists, use it
+            if preferred_sex is not None:
+                mapping[sg_id] = preferred_sex
+
+            # 3. If not, try the fallback field
+            else:
+                fallback_sex = participant.get('reportedSex')
+                if fallback_sex is not None:
+                    mapping[sg_id] = fallback_sex
+                    logger.warning(
+                        f"SG {sg_id}: Preferred 'participant_portal_reported_sex' "
+                        f"not found in meta. Using 'reportedSex' as fallback."
+                    )
+                else:
+                    # 4. If both are missing, log an error
+                    logger.error(
+                        f"SG {sg_id}: CANNOT FIND SEX. Both 'participant_portal_reported_sex' "
+                        f"and 'reportedSex' are missing or null. This SG will be "
+                        f"missing from the sex map."
+                    )
     return mapping
 
 

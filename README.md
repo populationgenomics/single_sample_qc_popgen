@@ -46,6 +46,34 @@ Your TOML configuration file must specify the following key options:
       * `last_stages`: A list of the final stages to run. To run the full pipeline use `['RegisterQcMetricsToMetamist']`.
       * `skip_stages`: (Optional) A list of stages to skip, e.g., `['RunMultiQc']`.
 
+Additional required/optional sections:
+
+```toml
+[cramqc]
+assume_sorted = true      
+num_pcs = 4               # Number of principal components (if used in derived metrics)
+
+[workflow.multiqc]
+send_to_slack = true      # Send Slack notification summarising failed samples
+deactivate_sgs = false    # If true, deactivate sequencing groups that fail any hard QC threshold
+
+[qc_thresholds.genome.min]
+mean_coverage = 30
+q30_bases = 8e10          # Total aligned Q30 bases threshold
+
+[qc_thresholds.genome.max]
+contamination_verifybamid = 0.05
+contamination_dragen = 0.03
+chimera_rate = 0.03
+
+[qc_thresholds.genome.equality]
+ploidy_estimation = true  # Expect ploidy estimation to match reported sex mapping
+
+[ica.pipelines]
+dragen_version = 'dragen_3_7_8'  # DRAGEN version tag used for locating metrics
+```
+
+Note: Adjust thresholds per dataset QC policy. Setting `send_to_slack = false` suppresses notifications; enabling `deactivate_sgs` removes failing samples from downstream use.
 
 ## How to Run the Pipeline
 

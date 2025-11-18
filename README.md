@@ -27,6 +27,7 @@ The workflow performs the following steps:
 
 1. **Run MultiQC: `RunMultiQc`** on the DRAGEN metrics output for each sample to generate a consolidated QC report and json data file.
 2. **Check QC metrics: `CheckMultiQc`** by parsing the MultiQC json data file to extract relevant QC metrics for each sample. The metrics are compared against predefined thresholds to determine if the sample passes or fails QC. Optionally send Slack notifications for samples that fail QC and deactivate them in metamist.
+  * NOTE: The pipeline preferentially uses the `participant_portal_reported_sex` field from the participant `meta` data to determine sex to sequencing group mapping, falling back to the `reportedSex` field if the preferred field is not available.
 3. **Register QC metrics in metamist: `RegisterQcMetricsToMetamist`** by storing the extracted QC metrics in the `meta` field of each sequencing group in metamist for future reference. If there were no failed samples, then `CheckMultiQc` will output an empty JSON file which is handled as such: `RegisterQcMetricsToMetamist` will read the empty JSON file and proceed to only register the QC metrics.
 
 ## Prerequisites

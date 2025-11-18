@@ -58,7 +58,7 @@ class CheckMultiQc(CohortStage):
             cohort=cohort,
             multiqc_data_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')),
             multiqc_html_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_report_html')),
-            outputs=output,
+            output=output,
         )
 
         return self.make_outputs(target=cohort, data=output, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]

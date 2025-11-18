@@ -122,7 +122,12 @@ def build_sg_multiqc_meta_dict(multiqc_json: dict[str, Any]) -> dict[str, dict]:
 
     return extracted_data
 
-def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: dict[str, Any], cohort: Cohort, output: str):
+def update_sg_qc_metrics(
+        failed_samples: dict[str, list[str]],
+        meta_to_update: dict[str, Any],
+        cohort: Cohort,
+        output: cpg_utils.Path
+    ) -> dict[str, list[str]]:
     cohort_sgs: list[SequencingGroup] = cohort.get_sequencing_groups()
     meta_to_update = build_sg_multiqc_meta_dict(meta_to_update)
     logger.warning(f'Failed samples: {failed_samples}')
@@ -145,7 +150,7 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
         logger.info(f'Updated SG {sg.id}: {result_update_mutation}')
 
     # Write out meta fields updated to json
-    with cpg_utils.to_path(output).open('w') as f:
+    with output.open('w') as f:
         json.dump(meta_to_update, f, indent=4)
 
     # Deactivate sequencing groups that failed QC
@@ -163,7 +168,7 @@ def run(
     cohort: Cohort,
     multiqc_data_path: str,
     failed_samples_path: str,
-    output: str,
+    output: cpg_utils.Path,
 ):
 
     multiqc_data = load_json(

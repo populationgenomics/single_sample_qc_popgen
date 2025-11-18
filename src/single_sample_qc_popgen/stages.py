@@ -89,7 +89,7 @@ class RegisterQcMetricsToMetamist(CohortStage):
         workflow.multiqc.deactivate_sgs = true
     """
     def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        return {'.registered': str(get_output_path(filename=f'{cohort.id}_registered.json'))}
+        return {'registered': str(get_output_path(filename=f'{cohort.id}_registered.json'))}
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
 

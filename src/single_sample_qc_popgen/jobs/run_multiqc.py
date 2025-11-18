@@ -14,7 +14,7 @@ from single_sample_qc_popgen.utils import get_output_path
 
 def run_multiqc(
     cohort: Cohort,
-    outputs: dict[str, str],
+    outputs: dict[str, Path],
 ) -> BashJob | None:
     """
     Creates and calls the Job to run MultiQC.
@@ -93,7 +93,7 @@ def run_multiqc(
 
 
     # Write outputs to their final GCS locations
-    b.write_output(multiqc_job.html, outputs['multiqc_report_html'])
-    b.write_output(multiqc_job.json, outputs['multiqc_json'])
+    b.write_output(multiqc_job.html, str(outputs['multiqc_report_html']))
+    b.write_output(multiqc_job.json, str(outputs['multiqc_json']))
 
     return multiqc_job

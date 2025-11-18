@@ -12,6 +12,7 @@ import json
 from collections import defaultdict
 from typing import Any
 
+import cpg_utils
 from cpg_flow.targets import Cohort
 from cpg_utils import to_path
 from cpg_utils.config import config_retrieve, get_config
@@ -82,9 +83,9 @@ class QCChecker:
     Encapsulates all logic for checking a MultiQC report for a cohort.
     """
     # Now accepts multiqc_data directly, rather than finding it itself
-    def __init__(self, cohort: Cohort, multiqc_data: dict, outputs: dict[str, str]):
+    def __init__(self, cohort: Cohort, multiqc_data: dict, output: cpg_utils.Path):
         self.cohort = cohort
-        self.outputs = outputs
+        self.output = output
         self.cohort_sgs = self.cohort.get_sequencing_groups()
         self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
         self.multiqc_data = multiqc_data
@@ -259,13 +260,12 @@ def format_log_line(
             # Fallback for non-numeric values
             return f'{display_name}={val_to_check} {sign} {threshold}'
 
-def write_failures_to_json(bad_lines_by_sample: dict[str, list[str]], outputs: dict[str, str]) -> None:
+def write_failures_to_json(bad_lines_by_sample: dict[str, list[str]], output: cpg_utils.Path) -> None:
         """Writes all failed sample logs to a JSON file."""
-        output_path = outputs['failed_samples']
         logger.warning(
-            f'Writing {len(bad_lines_by_sample)} failed sample(s) to {output_path}'
+            f'Writing {len(bad_lines_by_sample)} failed sample(s) to {output}'
         )
-        with to_path(output_path).open('w') as f:
+        with to_path(output).open('w') as f:
                 json.dump(bad_lines_by_sample, f, indent=4)
 
 def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
@@ -313,7 +313,7 @@ def run(
     cohort: Cohort,
     multiqc_data_path: str,
     multiqc_html_path: str,
-    outputs: dict[str, str],
+    output: cpg_utils.Path,
 ):
 
     if base_url := cohort.dataset.web_url():
@@ -325,7 +325,7 @@ def run(
             multiqc_data_path,
             extract_key='report_general_stats_data'
         )
-    qc_checker = QCChecker(cohort, multiqc_data, outputs)
+    qc_checker = QCChecker(cohort, multiqc_data, output)
 
     seq_type = get_config()['workflow']['sequencing_type']
 
@@ -393,5 +393,5 @@ def run(
 
     # --- Post-checking steps ---
     if bad_lines_by_sample:
-        write_failures_to_json(bad_lines_by_sample, outputs)
+        write_failures_to_json(bad_lines_by_sample, output)
         post_to_slack(bad_lines_by_sample, qc_checker, html_url)

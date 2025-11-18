@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+import cpg_utils
 from cpg_flow.stage import (
     CohortStage,
     StageInput,
@@ -17,14 +18,14 @@ from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initiali
 
 @stage()
 class RunMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:  # pyright: ignore[reportIncompatibleMethodOverride]
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
-            'multiqc_json': str(get_output_path(filename=f'{cohort.id}_multiqc_data.json')),
-            'multiqc_report_html': str(get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web')),
+            'multiqc_json': get_output_path(filename=f'{cohort.id}_multiqc_data.json'),
+            'multiqc_report_html': get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web'),
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002
-        outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         multiqc_job: BashJob | None = run_multiqc.run_multiqc(
             cohort=cohort,
@@ -40,11 +41,11 @@ class RunMultiQc(CohortStage):
 
 @stage(required_stages=[RunMultiQc])
 class CheckMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> dict[str, str]:
-        return {'failed_samples': str(get_output_path(filename=f'{cohort.id}_failed_samples.json'))}
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
+        return get_output_path(filename=f'{cohort.id}_failed_samples.json')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        outputs: dict[str, str] = self.expected_outputs(cohort=cohort)
+        output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         qc_checks_job: PythonJob = initialise_python_job(
             job_name=f'Check {cohort.id} MultiQC Report',
@@ -57,11 +58,10 @@ class CheckMultiQc(CohortStage):
             cohort=cohort,
             multiqc_data_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')),
             multiqc_html_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_report_html')),
-            outputs=outputs,
+            outputs=output,
         )
 
-        return self.make_outputs(target=cohort, data=outputs, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]
-
+        return self.make_outputs(target=cohort, data=output, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]
 
 @stage(required_stages=[RunMultiQc, CheckMultiQc])
 class RegisterQcMetricsToMetamist(CohortStage):
@@ -88,11 +88,11 @@ class RegisterQcMetricsToMetamist(CohortStage):
     Optionally deactivates sequencing groups that failed QC checks. Toggleable via the following config:
         workflow.multiqc.deactivate_sgs = true
     """
-    def expected_outputs(self, cohort: Cohort) -> str:
-        return str(get_output_path(filename=f'{cohort.id}_registered.json'))
+    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
+        return get_output_path(filename=f'{cohort.id}_registered.json')
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        output: str = self.expected_outputs(cohort=cohort)
+        output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         register_qc_job: PythonJob = initialise_python_job(
             job_name=f'Register {cohort.id} QC Metrics',
@@ -101,7 +101,7 @@ class RegisterQcMetricsToMetamist(CohortStage):
         )
 
         multiqc_data_path = inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')
-        failed_samples_path = inputs.as_str(cohort, stage=CheckMultiQc, key='failed_samples')
+        failed_samples_path = inputs.as_str(cohort, stage=CheckMultiQc)
 
         register_qc_job.call(
             register_qc_metamist.run,

@@ -6,6 +6,7 @@ Options to deactivate sequencing groups that failed QC.
 import json
 from typing import Any
 
+import cpg_utils
 from cpg_flow.targets import Cohort, SequencingGroup
 from cpg_utils.config import config_retrieve
 from loguru import logger
@@ -144,7 +145,7 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
         logger.warning(f'Updated SG {sg.id}: {result_update_mutation}')
 
     # Write out meta fields updated to json
-    with open(output, 'w') as f:
+    with cpg_utils.to_path(output).open('w') as f:
         json.dump(meta_to_update, f, indent=4)
 
     # Deactivate sequencing groups that failed QC

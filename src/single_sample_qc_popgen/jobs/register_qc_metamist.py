@@ -130,7 +130,10 @@ def update_sg_qc_metrics(
     ) -> dict[str, list[str]]:
     cohort_sgs: list[SequencingGroup] = cohort.get_sequencing_groups()
     meta_to_update = build_sg_multiqc_meta_dict(meta_to_update)
-    logger.warning(f'Failed samples: {failed_samples}')
+    if not failed_samples:
+        logger.info('No failed samples detected for this cohort QC run.')
+    else:
+        logger.warning(f'Failed samples: {failed_samples}')
     logger.info(f'meta to update: {meta_to_update}')
     for sg in cohort_sgs:
         sg_meta ={}

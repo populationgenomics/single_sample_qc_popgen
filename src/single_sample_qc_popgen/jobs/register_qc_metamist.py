@@ -126,12 +126,12 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
     cohort_sgs: list[SequencingGroup] = cohort.get_sequencing_groups()
     meta_to_update = build_sg_multiqc_meta_dict(meta_to_update)
     logger.warning(f'Failed samples: {failed_samples}')
-    logger.warning(f'meta to update: {meta_to_update}')
+    logger.info(f'meta to update: {meta_to_update}')
     for sg in cohort_sgs:
         sg_meta ={}
         sg_meta['qc'] = meta_to_update.get(sg.id, {})
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
-        logger.warning(f'Updating SG {sg.id} with meta: {sg_meta}')
+        logger.info(f'Updating SG {sg.id} with meta: {sg_meta}')
         result_update_mutation = query(
             MUTATION_SEQUENCING_GROUP,
             variables={
@@ -142,7 +142,7 @@ def update_sg_qc_metrics(failed_samples: dict[str, list[str]], meta_to_update: d
                 },
             },
         )
-        logger.warning(f'Updated SG {sg.id}: {result_update_mutation}')
+        logger.info(f'Updated SG {sg.id}: {result_update_mutation}')
 
     # Write out meta fields updated to json
     with cpg_utils.to_path(output).open('w') as f:

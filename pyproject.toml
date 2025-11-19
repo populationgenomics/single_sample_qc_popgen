@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name='single_sample_qc_popgen'
-description='Run DeepVariant on a cohort of samples using cpg-flow'
+description='Run sample quality control on DRAGEN data using cpg-flow'
 readme = "README.md"
 # currently cpg-flow is pinned to this version
 requires-python = ">=3.10,<3.11"
@@ -34,7 +34,6 @@ Repository = "https://github.com/populationgenomics/single_sample_qc_popgen"
 # various requirements when running cpg-flow/analysis-runner
 cpg = [
     'cpg-flow>=v0.2.2',
-    'scikit-learn',
 ]
 test = [
     'bump2version',
@@ -49,7 +48,6 @@ single_sample_qc_popgen = 'single_sample_qc_popgen.run_workflow:cli_main'
 [tool.hatch.build.targets.wheel]
 # package-dir = {"" = "src"}
 packages = [
-    "gnomad",
     "src/single_sample_qc_popgen"
 ]
 
@@ -71,11 +69,6 @@ exclude = '''
 
 [tool.mypy]
 ignore_missing_imports = true
-exclude = '^gnomad_methods/'
-
-[[tool.mypy.overrides]]
-module = "gnomad_methods.*"
-ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ['test']

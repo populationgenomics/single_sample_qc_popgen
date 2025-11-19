@@ -69,7 +69,7 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
             mapping[sg['id']] = sg['sample']['participant']['reportedSex']
     return mapping
 
-def build_sg_multiqc_meta_dict(multiqc_json: dict[str, Any]) -> dict[str, dict]:
+def build_sg_multiqc_meta_dict(cohort_sgs: list[SequencingGroup], multiqc_json: dict[str, Any]) -> dict[str, dict]:
     """
     Build a dictionary mapping sequencing group IDs to their MultiQC metrics.
     """
@@ -102,23 +102,34 @@ def build_sg_multiqc_meta_dict(multiqc_json: dict[str, Any]) -> dict[str, dict]:
     ]
 
     extracted_data = {}
-    # Get a list of all CPG IDs from one of the tools
-    sample_ids = list(multiqc_json.get('DRAGEN', {}).keys())
 
-    if not sample_ids:
-        logger.error("Error: Could not find any sample IDs in the data.")
-
-    for cpg_id in sample_ids:
+    for sg in cohort_sgs:
         sample_metrics = {}
+        missing_tools_for_this_sample = set()
+
         for out_key, tool_key, metric_key in metric_map:
+            # Check tool key exists
+            if tool_key not in multiqc_json:
+                sample_metrics[out_key] = None
+                continue
+
+            # Extract metric values for sequencing group, handle missing keys
+            if sg.id not in multiqc_json[tool_key]:
+                sample_metrics[out_key] = None
+                # Only log if we haven't complained about this specific tool for this sample yet
+                if tool_key not in missing_tools_for_this_sample:
+                    logger.warning(f"⚠️ Sequencing Group '{sg.id}' missing from MultiQC module: '{tool_key}'")
+                    missing_tools_for_this_sample.add(tool_key)
+                continue
+
             try:
-                value = multiqc_json[tool_key][cpg_id][metric_key]
+                value = multiqc_json[tool_key][sg.id][metric_key]
                 sample_metrics[out_key] = value
             except (KeyError, TypeError):
                 # Use None if the metric is missing for this sample
                 sample_metrics[out_key] = None
 
-        extracted_data[cpg_id] = sample_metrics
+        extracted_data[sg.id] = sample_metrics
 
     return extracted_data
 
@@ -129,7 +140,7 @@ def update_sg_qc_metrics(
         output: cpg_utils.Path
     ) -> dict[str, list[str]]:
     cohort_sgs: list[SequencingGroup] = cohort.get_sequencing_groups()
-    meta_to_update = build_sg_multiqc_meta_dict(meta_to_update)
+    meta_to_update = build_sg_multiqc_meta_dict(cohort_sgs, meta_to_update)
     if not failed_samples:
         logger.info('No failed samples detected for this cohort QC run.')
     else:

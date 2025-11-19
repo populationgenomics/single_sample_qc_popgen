@@ -258,6 +258,7 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
             logger.warning(
                 f"Metric '{metric}' has a threshold but is not defined in QC_MAPPING. "
                 f"Using default names."
+                f"Default names are the following: {list(qc_checker.QC_MAPPING.keys())}"
             )
             qc_thresholds[metric] = {
                 'threshold': threshold,

@@ -20,6 +20,7 @@ from cpg_utils.slack import send_message
 from loguru import logger
 from metamist.graphql import gql, query
 
+from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD
 from single_sample_qc_popgen.utils import load_json
 
 REPORTED_SEX_QUERY = gql(
@@ -326,7 +327,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
 
     # 1. Check for high failure rate
     high_failure_message = None
-    if num_total_sgs > 0 and (num_failed / num_total_sgs) > 0.05: # noqa: PLR2004
+    if num_total_sgs > 0 and (num_failed / num_total_sgs) > FAILURE_RATE_THRESHOLD:
         failure_percent = (num_failed / num_total_sgs) * 100
         high_failure_message = (
             '=================================\n'

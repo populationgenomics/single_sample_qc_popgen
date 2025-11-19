@@ -1,6 +1,3 @@
-# cpg-flow-pipeline-template
-A template repository to use as a base for CPG workflows using the cpg-flow pipeline framework
-
 ## Purpose
 
 This pipeline performs sample quality-control (QC) on single-sample sequencing data from the [DRAGEN alignment and genotyping pipeline](https://github.com/populationgenomics/dragen_align_pa). The DRAGEN pipelien produces CRAM files and associated QC metrics, which this pipeline analyses to ensure that the data meets quality standards before being used in downstream analyses.

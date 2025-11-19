@@ -68,7 +68,7 @@ def run_multiqc(
     input_file_dict: dict[str, str] = {f'file_{i}': str(p) for i, p in enumerate(all_qc_paths)}
     b_input_dir_resource = b.read_input_group(**input_file_dict)
 
-    report_name = f'{cohort.name}_multiqc_report'
+    report_name = f'{cohort.id}_multiqc_report'
     multiqc_job.declare_resource_group(
         out={
             'html': f'{report_name}.html',

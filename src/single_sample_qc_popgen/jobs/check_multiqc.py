@@ -177,26 +177,43 @@ class QCChecker:
             },
         }
 
-    def _calculate_ploidy(self, d: dict, sg_id: str, sex_mapping: dict[str, int])-> tuple[bool | None, str, str]:
+    def _calculate_ploidy(self, d: dict, sg_id: str, sex_mapping: dict[str, int]) -> tuple[bool | None, str, str]:
         """
-        Calculator for ploidy.
-        Returns: (value_to_check, raw_value_for_log, expected_value_for_log)
+        Validates that the DRAGEN-estimated ploidy matches the participant's reported sex.
+
+        This method performs a strict string comparison between the DRAGEN output
+        (e.g., 'XX', 'XY', 'XC', 'XXY') and the expected karyotype derived from
+        the metadata sex code (1 -> 'XY', 2 -> 'XX').
+
+        Any deviation from the strict expected string (including valid biological
+        aneuploidies like 'XXY' or 'XO') will result in a mismatch (False) to flag
+        the sample for manual review.
+
+        Returns:
+            tuple[bool | None, str, str]: A tuple containing:
+                - is_match (bool | None): True if ploidy matches expected sex exactly,
+                  False if there is a mismatch, or None if metadata/metrics are missing.
+                - raw_ploidy (str): The raw string value from DRAGEN (e.g., 'XX', 'Unknown').
+                - expected_ploidy (str): The expected string (e.g., 'XY', 'XX') or error msg.
         """
         raw_ploidy = d.get('Ploidy estimation', 'Unknown')
         expected_sex_num = sex_mapping.get(sg_id)
 
         if expected_sex_num is None:
-            # Cannot check, but can log
             return None, raw_ploidy, f"Unknown (no sex for {sg_id})"
+
         if raw_ploidy == 'Unknown':
-            # Cannot check
             return None, raw_ploidy, str(expected_sex_num)
 
+        expected_ploidy = 'XY' if expected_sex_num == 1 else 'XX'
 
-        is_match = raw_ploidy.count('X') == expected_sex_num
+        # Handle cases where sex is neither 1 nor 2 (e.g. 0/Unknown)
+        if expected_sex_num not in [1, 2]:
+             return None, raw_ploidy, f"Ambiguous Sex Code {expected_sex_num}"
 
-        # Convert expected_sex_num to XX/XY
-        expected_ploidy = 'XX' if expected_sex_num == 2 else 'XY' # noqa: PLR2004
+        # Strict comparison check
+        # This flags anything that isn't exactly XX or XY (e.g., XO, XXY, XYY, XXX)
+        is_match = raw_ploidy == expected_ploidy
 
         return is_match, raw_ploidy, expected_ploidy
 

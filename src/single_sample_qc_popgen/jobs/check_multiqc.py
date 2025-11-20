@@ -98,8 +98,8 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
                 if fallback_field is not None:
                     mapping[sg_id] = fallback_field
                     logger.warning(
-                        f"SG {sg_id}: Preferred 'participant_portal_reported_sex' "
-                        f"not found in meta. Using 'reportedSex' as fallback."
+                        f"SG {sg_id}: Preferred field 'participant_portal_reported_sex' "
+                        f"not found in meta. Using field 'reportedSex' as fallback."
                     )
                 else:
                     # 4. If both are missing, log an error

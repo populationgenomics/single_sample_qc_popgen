@@ -94,9 +94,9 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
 
             # 3. If not, try the fallback field
             else:
-                fallback_sex = participant.get('reportedSex')
-                if fallback_sex is not None:
-                    mapping[sg_id] = fallback_sex
+                fallback_field = participant.get('reportedSex')
+                if fallback_field is not None:
+                    mapping[sg_id] = fallback_field
                     logger.warning(
                         f"SG {sg_id}: Preferred 'participant_portal_reported_sex' "
                         f"not found in meta. Using 'reportedSex' as fallback."

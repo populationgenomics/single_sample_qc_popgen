@@ -104,7 +104,7 @@ def build_sg_multiqc_meta_dict(cohort_sgs: list[SequencingGroup], multiqc_json: 
     extracted_data = {}
 
     for sg in cohort_sgs:
-        sample_metrics = {}
+        sample_metrics: dict[str, Any] = {}
         missing_tools_for_this_sample = set()
 
         for out_key, tool_key, metric_key in metric_map:

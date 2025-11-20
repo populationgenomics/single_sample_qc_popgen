@@ -48,7 +48,7 @@ Additional required/optional sections:
 
 ```toml
 [cramqc]
-assume_sorted = true      
+assume_sorted = true
 num_pcs = 4               # Number of principal components (if used in derived metrics)
 
 [workflow.multiqc]

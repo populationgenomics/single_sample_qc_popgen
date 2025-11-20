@@ -19,6 +19,7 @@ env:
 jobs:
   get_next_version:
     runs-on: ubuntu-latest
+    environment: production
     outputs:
       matrix: ${{ steps.get_next_version.outputs.next_version }}
     steps:

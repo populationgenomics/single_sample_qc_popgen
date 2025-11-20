@@ -1,0 +1,34 @@
+[workflow]
+name = 'single_sample_qc_popgen'
+input_cohorts = ['COH0000']
+sequencing_type = 'genome'
+last_stages = ['RegisterQcMetricsToMetamist']
+
+[cramqc]
+assume_sorted = true
+num_pcs = 4
+
+[workflow.multiqc]
+send_to_slack = true
+# If true, will deactivate any sequencing groups that fail any of the qc_thresholds.
+deactivate_sgs = false
+
+[qc_thresholds.genome.min]
+mean_coverage = 30
+q30_bases = 8e10
+
+[qc_thresholds.genome.max]
+contamination_verifybamid = 0.05
+contamination_dragen = 0.03
+chimera_rate = 0.03
+
+[qc_thresholds.genome.equality]
+ploidy_estimation = true
+
+[ica.pipelines]
+dragen_version = 'dragen_3_7_8'
+
+[slack]
+channel = 'C09P4QCKNR1' # Slack channel ID for #popgen-pipeline-alerts
+token_secret_id = 'dragen-single-sample-qc'
+token_project_id = 'cpg-common'

@@ -1,1 +1,12 @@
-# add your Dockerfile here, installing your pipeline (if that's what you want to do)
+FROM australia-southeast1-docker.pkg.dev/cpg-common/images/cpg_hail_gcloud:0.2.134.cpg1
+
+ENV VERSION=0.0.1
+
+# Add in the additional requirements that are most likely to change.
+COPY LICENSE pyproject.toml README.md ./
+COPY src src/
+
+RUN apt update && apt install -y \
+    git
+
+RUN pip install .[cpg]

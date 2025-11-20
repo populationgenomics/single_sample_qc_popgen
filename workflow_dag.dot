@@ -1,0 +1,30 @@
+digraph SingleSampleQcWorkflow {
+    label="Single Sample QC Workflow";
+    labelloc=top;
+    fontsize=22;
+    rankdir=LR;
+    splines=ortho;
+    ordering=out;
+    bgcolor="#f9f9f9";
+
+    node [shape=box, style="filled", fontname="Helvetica", fontsize=12, color="#444444", width=2.6, height=0.9];
+    edge [color="#888888", penwidth=2, arrowsize=0.8];
+
+    // Palette (subset of ColorBrewer Set2 + neutral)
+    // MultiQC run:        #8da0cb (blue)
+    // QC evaluation:      #fc8d62 (orange)
+    // Registration/meta:  #66c2a5 (green)
+
+    RunMultiQc                  [fillcolor="#8da0cb",  style="filled,bold", penwidth=3, label="RunMultiQc\n(C)\nSTART"];
+    CheckMultiQc                [fillcolor="#fc8d62",  label="CheckMultiQc\n(C)\n[Evaluate thresholds]"];
+    RegisterQcMetricsToMetamist [fillcolor="#66c2a5",  style="filled,bold", penwidth=3, label="RegisterQcMetricsToMetamist\n(C)\nEND"];
+
+    // Dependencies
+    RunMultiQc -> CheckMultiQc;
+    CheckMultiQc -> RegisterQcMetricsToMetamist;
+
+    // Rank alignment
+    {rank=same; RunMultiQc;}
+    {rank=same; CheckMultiQc;}
+    {rank=same; RegisterQcMetricsToMetamist;}
+}

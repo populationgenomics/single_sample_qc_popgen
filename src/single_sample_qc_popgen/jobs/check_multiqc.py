@@ -81,16 +81,16 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
             sg_id = sg['id']
             participant = sg['sample']['participant']
 
-            preferred_sex = None
+            preferred_field = None
             participant_meta = participant.get('meta')
 
             # 1. Check for the preferred field first
             if isinstance(participant_meta, dict):
-                preferred_sex = participant_meta.get('participant_portal_reported_sex')
+                preferred_field = participant_meta.get('participant_portal_reported_sex')
 
             # 2. If the preferred field exists, use it
-            if preferred_sex is not None:
-                mapping[sg_id] = preferred_sex
+            if preferred_field is not None:
+                mapping[sg_id] = preferred_field
 
             # 3. If not, try the fallback field
             else:

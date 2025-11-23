@@ -140,6 +140,10 @@ class QCChecker:
                 'multiqc_report_name': 'Q30 bases',
                 'display_name': 'Q30 Bases',
             },
+            'q30_bases_pct': {
+                'multiqc_report_name': 'Q30 bases pct',
+                'display_name': 'Q30 Bases (%)',
+            },
             'contamination_verifybamid': {
                 'multiqc_report_name': 'FREEMIX',
                 'display_name': 'Contamination (VerifyBamID)',
@@ -239,11 +243,10 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
     Example config structure:
         [qc_thresholds.genome.min]
         mean_coverage = 30
-        q30_bases = 8e10
+        q30_bases_pct = 80
         [qc_thresholds.genome.max]
-        contamination_verifybamid = 0.05
         contamination_dragen = 0.03
-        chimera_rate = 0.03
+        chimera_rate = 0.05
         [qc_thresholds.genome.equality]
         ploidy_estimation = True
     """

@@ -16,7 +16,7 @@ from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, ru
 from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
 
 
-@stage()
+@stage(analysis_type='qc', analysis_keys=['multiqc_json'])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
@@ -71,9 +71,12 @@ class RegisterQcMetricsToMetamist(CohortStage):
         contamination_dragen: float
         mean_coverage: float
         median_coverage: float
-        pct_genome_20x: float
+        pct_genome_gt_20x: float
         pct_q30_bases: float
-        pct_mapped_reads: float
+        q30_bases_pct: float
+        mapping_rate_pct: float
+        chimera_alignments: float
+        total_alignments: int
         pct_duplicate_reads: float
         mean_insert_size: float
         std_dev_insert_size: float

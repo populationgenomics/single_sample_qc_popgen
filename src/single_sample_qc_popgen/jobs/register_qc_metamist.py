@@ -81,15 +81,17 @@ def build_sg_multiqc_meta_dict(cohort_sgs: list[SequencingGroup], multiqc_json: 
         # Coverage & Yield
         ('mean_coverage', 'DRAGEN', 'Average sequenced coverage over genome'),
         ('median_coverage', 'DRAGEN_5', 'wgs median autosomal coverage over genome'),
-        ('pct_genome_20x', 'DRAGEN_5', 'wgs pct of genome with coverage [20x:inf)'),
-        ('pct_q30_bases', 'DRAGEN', 'Q30 bases pct'),
+        ('pct_genome_gt_20x', 'DRAGEN_5', 'wgs pct of genome with coverage [20x:inf)'),
+        ('q30_bases_pct', 'DRAGEN', 'Q30 bases pct'),
 
         # Alignment & Library Quality
-        ('pct_mapped_reads', 'DRAGEN', 'Mapped reads pct'),
+        ('mapping_rate_pct', 'DRAGEN', 'Mapped reads pct'),
         ('pct_duplicate_reads', 'DRAGEN', 'Number of duplicate marked reads pct'),
         ('mean_insert_size', 'DRAGEN', 'Insert length: mean'),
         ('std_dev_insert_size', 'DRAGEN', 'Insert length: standard deviation'),
         ('avg_gc_content', 'dragen-fastqc', 'avg_gc_content_percent'),
+        ('chimera_alignments', 'DRAGEN', 'Supplementary (chimeric) alignments'),
+        ('total_alignments', 'DRAGEN', 'Total alignments'),
 
         # Sex & Ploidy
         ('ploidy_estimation', 'DRAGEN_4', 'Ploidy estimation'),

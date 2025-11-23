@@ -14,11 +14,11 @@ send_to_slack = true
 deactivate_sgs = false
 
 [qc_thresholds.genome.min]
-mean_coverage = 30
-q30_bases = 8e10
+pct_genome_gt_20x = 0.90
+mapping_rate_pct = 80
+q30_bases_pct = 80
 
 [qc_thresholds.genome.max]
-contamination_verifybamid = 0.05
 contamination_dragen = 0.03
 chimera_rate = 0.03
 

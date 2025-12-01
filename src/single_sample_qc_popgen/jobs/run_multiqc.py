@@ -2,6 +2,8 @@
 Batch jobs to run MultiQC.
 """
 
+import os
+
 from cpg_flow.targets import Cohort
 from cpg_utils import Path, to_path
 from cpg_utils.config import image_path
@@ -9,7 +11,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
 
-from single_sample_qc_popgen.utils import get_output_path
+from single_sample_qc_popgen.utils import get_output_path, get_qc_path
 
 
 def run_multiqc(
@@ -50,10 +52,15 @@ def run_multiqc(
     )
     multiqc_job.image(image=image_path('multiqc', '1.30-3'))
     multiqc_job.storage('10Gi')
+    multiqc_job.cpu(8)
 
-    # Read all QC files into the job's input directory
-    input_file_dict: dict[str, str] = {f'file_{i}': str(p) for i, p in enumerate(all_dragen_csv_paths)}
-    b_input_dir_resource = b.read_input_group(**input_file_dict)
+    # Write the list of QC file paths to a temporary input file
+    qc_files_path: Path = get_qc_path(f'{cohort.name}_multiqc_input.txt', category='tmp')
+
+    qc_files_path.write_text('\n'.join(str(p) for p in all_dragen_csv_paths))
+
+    b_input_dir_resource = b.read_input(qc_files_path)
+    local_metrics_dir = os.path.join(str(multiqc_job.outdir), 'metrics_input')
 
     report_name = f'{cohort.id}_multiqc_report'
     multiqc_job.declare_resource_group(
@@ -66,8 +73,12 @@ def run_multiqc(
     # Define the command
     multiqc_job.command(
         f"""
+        mkdir -p {local_metrics_dir}
+
+        cat {b_input_dir_resource} | xargs -P 16 -I {{}} gcloud storage cp -- {{}} {local_metrics_dir}
+
         multiqc \\
-        {b_input_dir_resource} \\
+        {local_metrics_dir} \\
         -o {multiqc_job.outdir} \\
         --title 'MultiQC Report for {cohort.name}' \\
         --filename '{report_name}.html' \\
@@ -77,7 +88,6 @@ def run_multiqc(
         mv {multiqc_job.outdir}/{report_name}_data/multiqc_data.json {multiqc_job.json}
         """
     )
-
 
     # Write outputs to their final GCS locations
     b.write_output(multiqc_job.html, str(outputs['multiqc_report_html']))

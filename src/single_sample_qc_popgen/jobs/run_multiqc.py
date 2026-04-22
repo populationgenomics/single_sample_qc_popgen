@@ -82,7 +82,8 @@ def run_multiqc(
         -o {multiqc_job.outdir} \\
         --title 'MultiQC Report for {cohort.name}' \\
         --filename '{report_name}.html' \\
-        --cl-config 'max_table_rows: 10000'
+        --cl-config 'max_table_rows: 10000' \\
+        --ignore '*time_metrics*'
 
         mv {multiqc_job.outdir}/{report_name}.html {multiqc_job.html}
         mv {multiqc_job.outdir}/{report_name}_data/multiqc_data.json {multiqc_job.json}

@@ -20,14 +20,16 @@ from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, ru
 from single_sample_qc_popgen.utils import initialise_python_job
 
 
-def get_output_prefix(cohort: Cohort, stage_name: str) -> Path:
+def get_output_prefix(cohort: Cohort, stage_name: str, category: str | None = None) -> Path:
     """
     Standardised output prefix for CohortStage outputs.
     Format: cohort.dataset.prefix() / workflow.name / stage_name / cohort.id / version
+    Pass category='web' for files that should be publicly accessible via the web bucket.
     """
     stage_version = config_retrieve(['workflow', 'output_versions', stage_name], None)
     version = stage_version or config_retrieve(['workflow', 'version'], 'v1')
-    return cohort.dataset.prefix() / get_workflow().name / stage_name / cohort.id / version
+    prefix_kwargs = {'category': category} if category else {}
+    return cohort.dataset.prefix(**prefix_kwargs) / get_workflow().name / stage_name / cohort.id / version
 
 
 @stage(analysis_type='qc', analysis_keys=['multiqc_json'])
@@ -35,7 +37,7 @@ class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
             'multiqc_json': get_output_prefix(cohort, self.name) / 'multiqc_data.json',
-            'multiqc_report_html': get_output_prefix(cohort, self.name) / 'multiqc_report.html',
+            'multiqc_report_html': get_output_prefix(cohort, self.name, category='web') / 'multiqc_report.html',
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002

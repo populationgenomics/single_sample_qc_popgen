@@ -75,6 +75,8 @@ def run_multiqc(
         f"""
         mkdir -p {local_metrics_dir}
 
+        gcloud auth list > /dev/null
+
         cat {b_input_dir_resource} | xargs -P 16 -I {{}} gcloud storage cp -- {{}} {local_metrics_dir}
 
         multiqc \\

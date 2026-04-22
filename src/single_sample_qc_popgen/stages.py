@@ -12,16 +12,30 @@ from loguru import logger
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
+from cpg_flow.workflow import get_workflow
+from cpg_utils import Path
+from cpg_utils.config import config_retrieve
+
 from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, run_multiqc
-from single_sample_qc_popgen.utils import get_output_path, get_qc_path, initialise_python_job
+from single_sample_qc_popgen.utils import initialise_python_job
+
+
+def get_output_prefix(cohort: Cohort, stage_name: str) -> Path:
+    """
+    Standardised output prefix for CohortStage outputs.
+    Format: cohort.dataset.prefix() / workflow.name / stage_name / cohort.id / version
+    """
+    stage_version = config_retrieve(['workflow', 'output_versions', stage_name], None)
+    version = stage_version or config_retrieve(['workflow', 'version'], 'v1')
+    return cohort.dataset.prefix() / get_workflow().name / stage_name / cohort.id / version
 
 
 @stage(analysis_type='qc', analysis_keys=['multiqc_json'])
 class RunMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
         return {
-            'multiqc_json': get_output_path(filename=f'{cohort.id}_multiqc_data.json'),
-            'multiqc_report_html': get_qc_path(filename=f'{cohort.id}_multiqc_report.html', category='web'),
+            'multiqc_json': get_output_prefix(cohort, self.name) / 'multiqc_data.json',
+            'multiqc_report_html': get_output_prefix(cohort, self.name) / 'multiqc_report.html',
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002
@@ -42,7 +56,7 @@ class RunMultiQc(CohortStage):
 @stage(required_stages=[RunMultiQc])
 class CheckMultiQc(CohortStage):
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return get_output_path(filename=f'{cohort.id}_failed_samples.json')
+        return get_output_prefix(cohort, self.name) / f'{cohort.id}_failed_samples.json'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
@@ -92,7 +106,7 @@ class RegisterQcMetricsToMetamist(CohortStage):
         workflow.multiqc.deactivate_sgs = true
     """
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return get_output_path(filename=f'{cohort.id}_registered.json')
+        return get_output_prefix(cohort, self.name) / f'{cohort.id}_registered.json'
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)

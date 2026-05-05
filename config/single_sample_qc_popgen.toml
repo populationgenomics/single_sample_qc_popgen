@@ -25,6 +25,12 @@ chimera_rate = 0.03
 [qc_thresholds.genome.equality]
 ploidy_estimation = true
 
+[impute_sex]
+# Renormalise somalier f_stat by the cohort median chrX heterozygosity
+# over putative XX samples. Requires >= 10 putative XX samples; otherwise
+# falls back to the simple proxy with a logged warning.
+median_correct_f_stat = false
+
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
 

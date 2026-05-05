@@ -120,13 +120,13 @@ class RegisterQcMetricsToMetamist(CohortStage):
         )
 
         multiqc_data_path = inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')
-        failed_samples_path = inputs.as_str(cohort, stage=CheckMultiQc)
+        qc_results_path = inputs.as_str(cohort, stage=CheckMultiQc)
 
         register_qc_job.call(
             register_qc_metamist.run,
             cohort=cohort,
             multiqc_data_path=multiqc_data_path,
-            failed_samples_path=failed_samples_path,
+            qc_results_path=qc_results_path,
             output=output,
         )
 

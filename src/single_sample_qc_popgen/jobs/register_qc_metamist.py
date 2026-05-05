@@ -138,6 +138,7 @@ def build_sg_multiqc_meta_dict(cohort_sgs: list[SequencingGroup], multiqc_json: 
 def update_sg_qc_metrics(
         failed_samples: dict[str, list[str]],
         meta_to_update: dict[str, Any],
+        sex_imputation_by_sg: dict[str, dict[str, Any]],
         cohort: Cohort,
         output: cpg_utils.Path
     ) -> dict[str, list[str]]:
@@ -151,8 +152,13 @@ def update_sg_qc_metrics(
     for sg in cohort_sgs:
         sg_meta ={}
         sg_meta['qc'] = meta_to_update.get(sg.id, {})
+        # Merge somalier-derived sex imputation fields (corrected_sex_karyotype,
+        # f_stat, x_het_rate, n_called_x, y_calls, y_n) alongside MultiQC metrics.
+        sg_meta['qc'].update(sex_imputation_by_sg.get(sg.id, {}))
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
         logger.info(f'Updating SG {sg.id} with meta: {sg_meta}')
+        # TODO: '-test' project suffix is hardcoded — likely a leftover from
+        # initial development. Should be config-driven (e.g. via cohort context).
         result_update_mutation = query(
             MUTATION_SEQUENCING_GROUP,
             variables={
@@ -183,7 +189,7 @@ def update_sg_qc_metrics(
 def run(
     cohort: Cohort,
     multiqc_data_path: str,
-    failed_samples_path: str,
+    qc_results_path: str,
     output: cpg_utils.Path,
 ):
 
@@ -191,14 +197,16 @@ def run(
         multiqc_data_path,
         extract_key='report_general_stats_data'
     )
-    failed_samples = load_json(
-        failed_samples_path,
-        allow_missing=True,
-    )
+    # qc_results_path holds both failed_samples and sex_imputation; structure:
+    # {"failed_samples": {sg_id: [msg, ...]}, "sex_imputation": {sg_id: {...}}}
+    qc_results = load_json(qc_results_path, allow_missing=True) or {}
+    failed_samples = qc_results.get('failed_samples', {})
+    sex_imputation_by_sg = qc_results.get('sex_imputation', {})
 
     update_sg_qc_metrics(
         failed_samples=failed_samples,
         meta_to_update=multiqc_data,
+        sex_imputation_by_sg=sex_imputation_by_sg,
         cohort=cohort,
         output=output,
     )

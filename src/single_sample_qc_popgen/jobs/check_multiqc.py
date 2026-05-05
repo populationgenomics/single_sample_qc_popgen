@@ -21,6 +21,7 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD
+from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
 from single_sample_qc_popgen.utils import load_json
 
 REPORTED_SEX_QUERY = gql(
@@ -122,6 +123,14 @@ class QCChecker:
         self.cohort_sgs = self.cohort.get_sequencing_groups()
         self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
         self.multiqc_data = multiqc_data
+        # Somalier-derived sex imputation per sg.id; empty dict for any sg
+        # missing inputs. Cohort-level XX-median correction is opt-in.
+        median_correct = config_retrieve(
+            ['impute_sex', 'median_correct_f_stat'], False,
+        )
+        self.sex_imputation_by_sg: dict[str, dict[str, Any]] = impute_sex_for_cohort(
+            self.cohort_sgs, median_correct=median_correct,
+        )
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
             'mean_coverage': {
                 'multiqc_report_name': 'Average sequenced coverage over genome',
@@ -192,35 +201,48 @@ class QCChecker:
 
         Any deviation from the strict expected string (including valid biological
         aneuploidies like 'XXY' or 'XO') will result in a mismatch (False) to flag
-        the sample for manual review.
+        the sample for manual review. The somalier-derived ``corrected_sex_karyotype``
+        (when available) is appended to the raw value purely for log/Slack context;
+        the pass/fail decision still comes from the strict DRAGEN-vs-reported check.
 
         Returns:
             tuple[bool | None, str, str]: A tuple containing:
                 - is_match (bool | None): True if ploidy matches expected sex exactly,
                   False if there is a mismatch, or None if metadata/metrics are missing.
-                - raw_ploidy (str): The raw string value from DRAGEN (e.g., 'XX', 'Unknown').
+                - raw_ploidy (str): The raw string value from DRAGEN (e.g., 'XX', 'Unknown'),
+                  optionally annotated with the somalier-corrected karyotype.
                 - expected_ploidy (str): The expected string (e.g., 'XY', 'XX') or error msg.
         """
         raw_ploidy = d.get('Ploidy estimation', 'Unknown')
+
+        # Annotate with corrected_sex_karyotype when somalier disagrees with DRAGEN
+        # (LoY: X0 → XY; hard discordance → ambiguous).
+        corrected = self.sex_imputation_by_sg.get(sg_id, {}).get('corrected_sex_karyotype')
+        raw_ploidy_log = (
+            f'{raw_ploidy} [corrected: {corrected}]'
+            if corrected and corrected != raw_ploidy
+            else raw_ploidy
+        )
+
         expected_sex_num = sex_mapping.get(sg_id)
 
         if expected_sex_num is None:
-            return None, raw_ploidy, f"Unknown (no sex for {sg_id})"
+            return None, raw_ploidy_log, f"Unknown (no sex for {sg_id})"
 
         if raw_ploidy == 'Unknown':
-            return None, raw_ploidy, str(expected_sex_num)
+            return None, raw_ploidy_log, str(expected_sex_num)
 
         expected_ploidy = 'XY' if expected_sex_num == 1 else 'XX'
 
         # Handle cases where sex is neither 1 nor 2 (e.g. 0/Unknown)
         if expected_sex_num not in [1, 2]:
-             return None, raw_ploidy, f"Ambiguous Sex Code {expected_sex_num}"
+             return None, raw_ploidy_log, f"Ambiguous Sex Code {expected_sex_num}"
 
         # Strict comparison check
         # This flags anything that isn't exactly XX or XY (e.g., XO, XXY, XYY, XXX)
         is_match = raw_ploidy == expected_ploidy
 
-        return is_match, raw_ploidy, expected_ploidy
+        return is_match, raw_ploidy_log, expected_ploidy
 
     def _calculate_chimera_rate(
         self, d: dict, _: str, __: dict
@@ -314,13 +336,28 @@ def format_log_line(
             # Fallback for non-numeric values
             return f'{display_name}={val_to_check} {sign} {threshold}'
 
-def write_failures_to_json(bad_lines_by_sample: dict[str, list[str]], output: cpg_utils.Path) -> None:
-        """Writes all failed sample logs to a JSON file."""
-        logger.warning(
-            f'Writing {len(bad_lines_by_sample)} failed sample(s) to {output}'
-        )
-        with to_path(output).open('w') as f:
-                json.dump(bad_lines_by_sample, f, indent=4)
+def write_qc_results_to_json(
+    bad_lines_by_sample: dict[str, list[str]],
+    sex_imputation_by_sg: dict[str, dict[str, Any]],
+    output: cpg_utils.Path,
+) -> None:
+    """Writes failed sample logs + sex-imputation results to a single JSON file.
+
+    Output structure::
+
+        {"failed_samples": {sg_id: [msg, ...]}, "sex_imputation": {sg_id: {...}}}
+    """
+    payload = {
+        'failed_samples': bad_lines_by_sample,
+        'sex_imputation': sex_imputation_by_sg,
+    }
+    logger.info(
+        f'Writing QC results to {output}: '
+        f'{len(bad_lines_by_sample)} failed sample(s), '
+        f'{len(sex_imputation_by_sg)} sex-imputation record(s)',
+    )
+    with to_path(output).open('w') as f:
+        json.dump(payload, f, indent=4)
 
 def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
     """Constructs and sends the final Slack message."""
@@ -443,9 +480,31 @@ def run(
                     else:
                         logger.info(f'✅ {sg_id}: {line}')
 
+    # --- Somalier-derived ambiguous karyotype check ---
+    # Hard discordance between DRAGEN ploidy and somalier f-stat
+    # (e.g. DRAGEN XX with f_stat > 0.7) — caught even when DRAGEN agrees
+    # with reported sex, so it adds to the strict-equality check above.
+    for sg_id, sex_data in qc_checker.sex_imputation_by_sg.items():
+        if sex_data.get('corrected_sex_karyotype') == 'ambiguous':
+            f_stat = sex_data.get('f_stat')
+            y_calls = sex_data.get('y_calls')
+            ploidy_estimation = None
+            for section_data in qc_checker.multiqc_data.values():
+                if sg_id in section_data:
+                    ploidy_estimation = section_data[sg_id].get('Ploidy estimation')
+                    break
+            line = (
+                f'Sex Karyotype ambiguous '
+                f'(DRAGEN={ploidy_estimation}, f_stat={f_stat:.4f}, y_calls={y_calls})'
+            )
+            logger.warning(f'❗ {sg_id}: {line}')
+            bad_lines_by_sample[sg_id].append(line)
+
     logger.info('') # Newline for readability
 
     # --- Post-checking steps ---
+    # Always write the JSON: register_qc_metamist consumes the sex_imputation
+    # block even when there are no failed samples.
+    write_qc_results_to_json(bad_lines_by_sample, qc_checker.sex_imputation_by_sg, output)
     if bad_lines_by_sample:
-        write_failures_to_json(bad_lines_by_sample, output)
         post_to_slack(bad_lines_by_sample, qc_checker, html_url)

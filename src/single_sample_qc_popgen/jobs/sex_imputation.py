@@ -1,7 +1,7 @@
 """
 Pure logic for somalier-based sex imputation.
 
-No Hail, no Metamist, no batch primitives. Files are read via cpg_utils.Path
+Files are read via cpg_utils.Path
 so this module can be invoked from inside or outside a Hail Batch job.
 
 Two signals are combined per sequencing group:

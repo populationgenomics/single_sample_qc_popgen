@@ -30,6 +30,19 @@ if TYPE_CHECKING:
 
 MEDIAN_CORRECT_MIN_XX = 10
 
+# Somalier's standard panel ships ~360 chrY sites. A true XY sample typically
+# has tens-to-hundreds of called chrY sites; a true X0 (Turner) should have
+# 0–1 stochastic calls coming from chrX/Y homology and mapping noise. The
+# 1 < y_calls <= 5 gap is treated as "unusual" (likely contamination) and
+# left at the upstream call.
+#
+# `y_calls > Y_CALLS_LOY_FLOOR` on a DRAGEN X0 call → loss-of-Y → XY.
+Y_CALLS_LOY_FLOOR = 5
+# `y_calls <= Y_CALLS_TURNER_CEIL` confirms a DRAGEN X0 call as Turner-like
+# (no chrY signal); also used to gate "clean" XX samples for the cohort
+# median-het correction.
+Y_CALLS_TURNER_CEIL = 1
+
 
 def parse_somalier_sketch(data: bytes) -> dict[str, int]:
     """Parse somalier .somalier sketch and count chrX/chrY genotype calls.
@@ -131,19 +144,20 @@ def karyotype_from_signals(
     """Derive a corrected sex_karyotype from DRAGEN ploidy + somalier signals.
 
     Rules:
-      - X0 with chrY signal (y_calls > 5)        → XY  (loss-of-Y)
-      - X0 without chrY signal (y_calls <= 1)    → X0  (true Turner-like)
-      - DRAGEN XX but f_stat > 0.7               → ambiguous
-      - DRAGEN XY but f_stat < 0.3               → ambiguous
+      - X0 with chrY signal (y_calls > Y_CALLS_LOY_FLOOR)       → XY  (loss-of-Y)
+      - X0 without chrY signal (y_calls <= Y_CALLS_TURNER_CEIL) → X0  (true Turner-like)
+      - DRAGEN XX but f_stat > 0.7                              → ambiguous
+      - DRAGEN XY but f_stat < 0.3                              → ambiguous
       - Otherwise pass through (XX, XY, XXY, …).
 
-    The 1 < y_calls <= 5 gap on X0 falls through to pass-through (unusual;
-    likely contamination — flagged by initial_karyotype mismatch upstream).
+    The Y_CALLS_TURNER_CEIL < y_calls <= Y_CALLS_LOY_FLOOR gap on X0 falls
+    through to pass-through (unusual; likely contamination — flagged by
+    initial_karyotype mismatch upstream).
     """
     if initial_karyotype is None:
         return None
     if initial_karyotype == 'X0':
-        if y_calls > 5:
+        if y_calls > Y_CALLS_LOY_FLOOR:
             return 'XY'
         return 'X0'
     if initial_karyotype == 'XX' and not _isnan(f_stat) and f_stat > 0.7:
@@ -175,8 +189,8 @@ def impute_sex_for_cohort(
 
     Median correction (when enabled) renormalises f_stat by the cohort
     median chrX heterozygosity over putative XX samples (DRAGEN ploidy XX
-    AND y_calls <= 1). Falls back to the simple proxy when fewer than
-    MEDIAN_CORRECT_MIN_XX such samples are present.
+    AND y_calls <= Y_CALLS_TURNER_CEIL). Falls back to the simple proxy
+    when fewer than MEDIAN_CORRECT_MIN_XX such samples are present.
 
     Sequencing groups missing either input file are skipped with a warning.
     """
@@ -227,7 +241,7 @@ def _maybe_xx_median(raw: dict[str, dict[str, Any]]) -> float | None:
         n_called = s['x_hom_ref'] + s['x_het'] + s['x_hom_alt']
         if (
             s['ploidy_estimation'] == 'XX'
-            and s['y_calls'] <= 1
+            and s['y_calls'] <= Y_CALLS_TURNER_CEIL
             and n_called > 0
         ):
             putative_xx_rates.append(s['x_het'] / n_called)

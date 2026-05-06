@@ -13,6 +13,8 @@ import pytest
 
 from single_sample_qc_popgen.jobs.sex_imputation import (
     MEDIAN_CORRECT_MIN_XX,
+    Y_CALLS_LOY_FLOOR,
+    Y_CALLS_TURNER_CEIL,
     _maybe_xx_median,
     compute_f_stat,
     karyotype_from_signals,
@@ -146,14 +148,14 @@ class TestComputeFStat:
 class TestKaryotypeFromSignals:
     def test_loy_x0_with_y_signal_becomes_xy(self):
         # DRAGEN called X0 but somalier sees clear Y signal → loss-of-Y
-        assert karyotype_from_signals('X0', f_stat=0.95, y_calls=16) == 'XY'
+        assert karyotype_from_signals('X0', f_stat=0.95, y_calls=Y_CALLS_LOY_FLOOR + 1) == 'XY'
 
     def test_true_x0_no_y_signal(self):
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=0) == 'X0'
+        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_TURNER_CEIL) == 'X0'
 
     def test_x0_with_borderline_y_signal_passes_through(self):
-        # 1 < y_calls <= 5 — unusual; not promoted to XY
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=3) == 'X0'
+        # Y_CALLS_TURNER_CEIL < y_calls <= Y_CALLS_LOY_FLOOR — unusual; not promoted to XY.
+        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_LOY_FLOOR) == 'X0'
 
     def test_xx_with_male_fstat_is_ambiguous(self):
         assert karyotype_from_signals('XX', f_stat=0.95, y_calls=15) == 'ambiguous'
@@ -244,8 +246,8 @@ class TestMaybeXxMedian:
         assert _maybe_xx_median(raw) is None
 
     def test_xx_with_y_signal_excluded(self):
-        # Putative XX must have y_calls <= 1 to be considered "clean" XX
+        # Putative XX must have y_calls <= Y_CALLS_TURNER_CEIL to count as "clean" XX.
         contaminated = dict(_XX_RAW)
-        contaminated['y_calls'] = 5
+        contaminated['y_calls'] = Y_CALLS_TURNER_CEIL + 1
         raw = {f'sg{i}': dict(contaminated) for i in range(20)}
         assert _maybe_xx_median(raw) is None

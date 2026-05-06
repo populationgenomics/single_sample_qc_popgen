@@ -217,10 +217,10 @@ class QCChecker:
 
         # Annotate with corrected_sex_karyotype when somalier disagrees with DRAGEN
         # (LoY: X0 → XY; hard discordance → ambiguous).
-        corrected = self.sex_imputation_by_sg.get(sg_id, {}).get('corrected_sex_karyotype')
+        corrected_sex = self.sex_imputation_by_sg.get(sg_id, {}).get('corrected_sex_karyotype')
         raw_ploidy_log = (
-            f'{raw_ploidy} [corrected: {corrected}]'
-            if corrected and corrected != raw_ploidy
+            f'{raw_ploidy} [corrected: {corrected_sex}]'
+            if corrected_sex and corrected_sex != raw_ploidy
             else raw_ploidy
         )
 

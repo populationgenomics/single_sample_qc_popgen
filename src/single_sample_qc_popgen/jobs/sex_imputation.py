@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from cloudpathlib.exceptions import CloudPathFileNotFoundError
 from loguru import logger
 
-from single_sample_qc_popgen.utils import get_output_path
+from single_sample_qc_popgen.utils import get_dragen_output_path
 
 if TYPE_CHECKING:
     from cpg_flow.targets import SequencingGroup
@@ -197,8 +197,8 @@ def impute_sex_for_cohort(
     raw: dict[str, dict[str, Any]] = {}
     for sg in cohort_sgs:
         # somalier sketch is keyed by sg.id; DRAGEN dir is keyed by sg.name
-        somalier_path = get_output_path(f'somalier/{sg.id}.somalier')
-        ploidy_path = get_output_path(
+        somalier_path = get_dragen_output_path(f'somalier/{sg.id}.somalier')
+        ploidy_path = get_dragen_output_path(
             f'dragen_metrics/{sg.name}/{sg.name}.ploidy_estimation_metrics.csv',
         )
         try:

@@ -20,7 +20,10 @@ import statistics
 import struct
 from typing import TYPE_CHECKING, Any
 
+from cloudpathlib.exceptions import CloudPathFileNotFoundError
 from loguru import logger
+
+from single_sample_qc_popgen.utils import get_output_path
 
 if TYPE_CHECKING:
     from cpg_flow.targets import SequencingGroup
@@ -177,10 +180,6 @@ def impute_sex_for_cohort(
 
     Sequencing groups missing either input file are skipped with a warning.
     """
-    from cloudpathlib.exceptions import CloudPathFileNotFoundError
-
-    from single_sample_qc_popgen.utils import get_output_path
-
     raw: dict[str, dict[str, Any]] = {}
     for sg in cohort_sgs:
         # somalier sketch is keyed by sg.id; DRAGEN dir is keyed by sg.name
@@ -233,16 +232,16 @@ def _maybe_xx_median(raw: dict[str, dict[str, Any]]) -> float | None:
         ):
             putative_xx_rates.append(s['x_het'] / n_called)
 
-    if len(putative_xx_rates) >= MEDIAN_CORRECT_MIN_XX:
-        median = statistics.median(putative_xx_rates)
-        logger.info(
-            f'Using median-corrected f-stat: XX median het rate = '
-            f'{median:.4f} (n={len(putative_xx_rates)})',
+    if len(putative_xx_rates) < MEDIAN_CORRECT_MIN_XX:
+        logger.warning(
+            f'median_correct requested but only {len(putative_xx_rates)} putative XX '
+            f'samples found (need >= {MEDIAN_CORRECT_MIN_XX}); falling back to simple f-stat.',
         )
-        return median
+        return None
 
-    logger.warning(
-        f'median_correct requested but only {len(putative_xx_rates)} putative XX '
-        f'samples found (need >= {MEDIAN_CORRECT_MIN_XX}); falling back to simple f-stat.',
+    xx_median = statistics.median(putative_xx_rates)
+    logger.info(
+        f'Using median-corrected f-stat: XX median het rate = '
+        f'{xx_median:.4f} (n={len(putative_xx_rates)})',
     )
-    return None
+    return xx_median

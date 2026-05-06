@@ -190,7 +190,7 @@ class TestParseDragenPloidy:
             'PLOIDY ESTIMATION,,Y median / Autosomal median,0.0\n'
             'PLOIDY ESTIMATION,,Ploidy estimation,XX\n'
         )
-        assert parse_dragen_ploidy(csv.encode('utf-8')) == {
+        assert parse_dragen_ploidy(csv) == {
             'ploidy_estimation': 'XX',
             'norm_x_coverage': 0.94,
             'norm_y_coverage': 0.0,
@@ -202,14 +202,14 @@ class TestParseDragenPloidy:
             'PLOIDY ESTIMATION,,Y median / Autosomal median,0.45\n'
             'PLOIDY ESTIMATION,,Ploidy estimation,XY\n'
         )
-        result = parse_dragen_ploidy(csv.encode('utf-8'))
+        result = parse_dragen_ploidy(csv)
         assert result['ploidy_estimation'] == 'XY'
         assert result['norm_x_coverage'] == 0.5
         assert result['norm_y_coverage'] == 0.45
 
     def test_missing_fields_return_none(self):
         csv = 'PLOIDY ESTIMATION,,Some other field,42\n'
-        result = parse_dragen_ploidy(csv.encode('utf-8'))
+        result = parse_dragen_ploidy(csv)
         assert result['ploidy_estimation'] is None
         assert result['norm_x_coverage'] is None
         assert result['norm_y_coverage'] is None

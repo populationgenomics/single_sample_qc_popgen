@@ -74,8 +74,8 @@ def parse_somalier_sketch(data: bytes) -> dict[str, int]:
     }
 
 
-def parse_dragen_ploidy(data: bytes) -> dict[str, Any]:
-    """Parse a DRAGEN ploidy_estimation_metrics.csv blob.
+def parse_dragen_ploidy(data: str) -> dict[str, Any]:
+    """Parse a DRAGEN ploidy_estimation_metrics.csv text body.
 
     Each line is `PLOIDY ESTIMATION,,<metric>,<value>`. Returns the three
     fields needed downstream; missing fields come back as None.
@@ -85,7 +85,7 @@ def parse_dragen_ploidy(data: bytes) -> dict[str, Any]:
         'norm_x_coverage': None,
         'norm_y_coverage': None,
     }
-    for raw_line in data.decode('utf-8').splitlines():
+    for raw_line in data.splitlines():
         parts = [p.strip() for p in raw_line.split(',')]
         if len(parts) < 4:
             continue
@@ -189,13 +189,13 @@ def impute_sex_for_cohort(
         )
         try:
             sketch_bytes = somalier_path.read_bytes()
-            ploidy_bytes = ploidy_path.read_bytes()
+            ploidy_text = ploidy_path.read_text()
         except (FileNotFoundError, CloudPathFileNotFoundError) as e:
             logger.warning(f'Skipping sex imputation for {sg.id}: {e}')
             continue
 
         sketch = parse_somalier_sketch(sketch_bytes)
-        ploidy = parse_dragen_ploidy(ploidy_bytes)
+        ploidy = parse_dragen_ploidy(ploidy_text)
         raw[sg.id] = {**sketch, 'ploidy_estimation': ploidy['ploidy_estimation']}
 
     xx_median_het_rate = _maybe_xx_median(raw) if median_correct else None

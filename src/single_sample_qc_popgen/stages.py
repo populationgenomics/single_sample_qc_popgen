@@ -57,11 +57,15 @@ class RunMultiQc(CohortStage):
 
 @stage(required_stages=[RunMultiQc])
 class CheckMultiQc(CohortStage):
-    def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
-        return get_output_prefix(cohort, self.name) / f'{cohort.id}_failed_samples.json'
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        prefix = get_output_prefix(cohort, self.name)
+        return {
+            'failures': prefix / f'{cohort.id}_failed_samples.json',
+            'sex_imputation': prefix / f'{cohort.id}_sex_imputation.json',
+        }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
-        output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         qc_checks_job: PythonJob = initialise_python_job(
             job_name=f'Check {cohort.id} MultiQC Report',
@@ -74,10 +78,11 @@ class CheckMultiQc(CohortStage):
             cohort=cohort,
             multiqc_data_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')),
             multiqc_html_path=str(inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_report_html')),
-            output=output,
+            failures_output=outputs['failures'],
+            sex_imputation_output=outputs['sex_imputation'],
         )
 
-        return self.make_outputs(target=cohort, data=output, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]
+        return self.make_outputs(target=cohort, data=outputs, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]
 
 @stage(required_stages=[RunMultiQc, CheckMultiQc])
 class RegisterQcMetricsToMetamist(CohortStage):
@@ -120,13 +125,15 @@ class RegisterQcMetricsToMetamist(CohortStage):
         )
 
         multiqc_data_path = inputs.as_str(cohort, stage=RunMultiQc, key='multiqc_json')
-        qc_results_path = inputs.as_str(cohort, stage=CheckMultiQc)
+        failures_path = inputs.as_str(cohort, stage=CheckMultiQc, key='failures')
+        sex_imputation_path = inputs.as_str(cohort, stage=CheckMultiQc, key='sex_imputation')
 
         register_qc_job.call(
             register_qc_metamist.run,
             cohort=cohort,
             multiqc_data_path=multiqc_data_path,
-            qc_results_path=qc_results_path,
+            failures_path=failures_path,
+            sex_imputation_path=sex_imputation_path,
             output=output,
         )
 

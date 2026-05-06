@@ -117,9 +117,8 @@ class QCChecker:
     Encapsulates all logic for checking a MultiQC report for a cohort.
     """
     # Now accepts multiqc_data directly, rather than finding it itself
-    def __init__(self, cohort: Cohort, multiqc_data: dict, output: cpg_utils.Path):
+    def __init__(self, cohort: Cohort, multiqc_data: dict):
         self.cohort = cohort
-        self.output = output
         self.cohort_sgs = self.cohort.get_sequencing_groups()
         self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
         self.multiqc_data = multiqc_data
@@ -336,28 +335,26 @@ def format_log_line(
             # Fallback for non-numeric values
             return f'{display_name}={val_to_check} {sign} {threshold}'
 
-def write_qc_results_to_json(
+def write_qc_failures_to_json(
     bad_lines_by_sample: dict[str, list[str]],
+    output: cpg_utils.Path,
+) -> None:
+    """Writes failed sample logs to a JSON file: ``{sg_id: [msg, ...]}``."""
+    logger.info(f'Writing {len(bad_lines_by_sample)} failed sample(s) to {output}')
+    with to_path(output).open('w') as f:
+        json.dump(bad_lines_by_sample, f, indent=4)
+
+
+def write_sex_imputation_to_json(
     sex_imputation_by_sg: dict[str, dict[str, Any]],
     output: cpg_utils.Path,
 ) -> None:
-    """Writes failed sample logs + sex-imputation results to a single JSON file.
-
-    Output structure::
-
-        {"failed_samples": {sg_id: [msg, ...]}, "sex_imputation": {sg_id: {...}}}
-    """
-    payload = {
-        'failed_samples': bad_lines_by_sample,
-        'sex_imputation': sex_imputation_by_sg,
-    }
+    """Writes per-SG sex-imputation results to a JSON file: ``{sg_id: {...}}``."""
     logger.info(
-        f'Writing QC results to {output}: '
-        f'{len(bad_lines_by_sample)} failed sample(s), '
-        f'{len(sex_imputation_by_sg)} sex-imputation record(s)',
+        f'Writing {len(sex_imputation_by_sg)} sex-imputation record(s) to {output}',
     )
     with to_path(output).open('w') as f:
-        json.dump(payload, f, indent=4)
+        json.dump(sex_imputation_by_sg, f, indent=4)
 
 def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
     """Constructs and sends the final Slack message."""
@@ -404,7 +401,8 @@ def run(
     cohort: Cohort,
     multiqc_data_path: str,
     multiqc_html_path: str,
-    output: cpg_utils.Path,
+    failures_output: cpg_utils.Path,
+    sex_imputation_output: cpg_utils.Path,
 ):
 
     if base_url := cohort.dataset.web_url():
@@ -416,7 +414,7 @@ def run(
             multiqc_data_path,
             extract_key='report_general_stats_data'
         )
-    qc_checker = QCChecker(cohort, multiqc_data, output)
+    qc_checker = QCChecker(cohort, multiqc_data)
 
     seq_type = get_config()['workflow']['sequencing_type']
 
@@ -503,8 +501,10 @@ def run(
     logger.info('') # Newline for readability
 
     # --- Post-checking steps ---
-    # Always write the JSON: register_qc_metamist consumes the sex_imputation
-    # block even when there are no failed samples.
-    write_qc_results_to_json(bad_lines_by_sample, qc_checker.sex_imputation_by_sg, output)
+    # Both files are always written: register_qc_metamist depends on the
+    # sex-imputation file even when no samples fail QC, and writing an empty
+    # failures dict keeps the CheckMultiQc stage outputs satisfied.
+    write_qc_failures_to_json(bad_lines_by_sample, failures_output)
+    write_sex_imputation_to_json(qc_checker.sex_imputation_by_sg, sex_imputation_output)
     if bad_lines_by_sample:
         post_to_slack(bad_lines_by_sample, qc_checker, html_url)

@@ -189,7 +189,8 @@ def update_sg_qc_metrics(
 def run(
     cohort: Cohort,
     multiqc_data_path: str,
-    qc_results_path: str,
+    failures_path: str,
+    sex_imputation_path: str,
     output: cpg_utils.Path,
 ):
 
@@ -197,11 +198,8 @@ def run(
         multiqc_data_path,
         extract_key='report_general_stats_data'
     )
-    # qc_results_path holds both failed_samples and sex_imputation; structure:
-    # {"failed_samples": {sg_id: [msg, ...]}, "sex_imputation": {sg_id: {...}}}
-    qc_results = load_json(qc_results_path, allow_missing=True) or {}
-    failed_samples = qc_results.get('failed_samples', {})
-    sex_imputation_by_sg = qc_results.get('sex_imputation', {})
+    failed_samples = load_json(failures_path, allow_missing=True) or {}
+    sex_imputation_by_sg = load_json(sex_imputation_path, allow_missing=True) or {}
 
     update_sg_qc_metrics(
         failed_samples=failed_samples,

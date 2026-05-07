@@ -180,6 +180,22 @@ class TestKaryotypeFromSignals:
         assert karyotype_from_signals('XX', f_stat=float('nan'), y_calls=0) == 'XX'
         assert karyotype_from_signals('XY', f_stat=float('nan'), y_calls=16) == 'XY'
 
+    def test_threshold_overrides_flip_classification(self):
+        # f_stat=0.6 on a DRAGEN XX sample: ambiguous under default 0.5 floor,
+        # but passes through if a less-strict 0.7 floor is supplied.
+        assert karyotype_from_signals('XX', f_stat=0.6, y_calls=0) == 'ambiguous'
+        assert karyotype_from_signals(
+            'XX', f_stat=0.6, y_calls=0, xx_discordant_floor=0.7,
+        ) == 'XX'
+
+    def test_loy_floor_override(self):
+        # Default loy_floor=5: y_calls=4 on X0 stays X0. With loy_floor=3, same
+        # sample is promoted to XY.
+        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=4) == 'X0'
+        assert karyotype_from_signals(
+            'X0', f_stat=0.5, y_calls=4, loy_floor=3,
+        ) == 'XY'
+
 
 # ---------------------------------------------------------------------------
 # _maybe_xx_median (cohort-level guard)
@@ -215,3 +231,20 @@ class TestMaybeXxMedian:
         contaminated['y_calls'] = Y_CALLS_TURNER_CEIL + 1
         raw = {f'sg{i}': dict(contaminated) for i in range(20)}
         assert _maybe_xx_median(raw) is None
+
+    def test_min_xx_override_lowers_threshold(self):
+        # A pilot cohort below the default MIN_XX can opt into median-correction
+        # by lowering min_xx via config.
+        n = MEDIAN_CORRECT_MIN_XX - 1
+        raw = {f'sg{i}': dict(_XX_RAW) for i in range(n)}
+        assert _maybe_xx_median(raw) is None
+        assert _maybe_xx_median(raw, min_xx=n) == pytest.approx(0.30, abs=1e-6)
+
+    def test_turner_ceil_override_widens_clean_xx_gate(self):
+        # Default turner_ceil=1 excludes y_calls=2 samples. A more permissive
+        # override admits them.
+        sample = dict(_XX_RAW)
+        sample['y_calls'] = 2
+        raw = {f'sg{i}': dict(sample) for i in range(MEDIAN_CORRECT_MIN_XX)}
+        assert _maybe_xx_median(raw) is None
+        assert _maybe_xx_median(raw, turner_ceil=2) == pytest.approx(0.30, abs=1e-6)

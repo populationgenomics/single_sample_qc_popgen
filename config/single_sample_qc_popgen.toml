@@ -27,9 +27,33 @@ ploidy_estimation = true
 
 [impute_sex]
 # Renormalise somalier f_stat by the cohort median chrX heterozygosity
-# over putative XX samples. Requires >= 10 putative XX samples; otherwise
-# falls back to the simple proxy with a logged warning.
+# over putative XX samples. Requires >= median_correct_min_xx putative XX
+# samples; otherwise falls back to the simple proxy with a logged warning.
 median_correct_f_stat = false
+
+# Minimum number of putative XX samples required before median correction
+# is applied. Statistical guard: a median over very few samples is noisy.
+median_correct_min_xx = 10
+
+# Somalier's chrY panel ships ~17 sites (chrX panel is ~365). On a 100+
+# sample CPG cohort: true XY has y_calls >= 15, normal female 0-2,
+# true X0/Turner ~0. Tune for different somalier panels or sequencing
+# depths.
+# > floor on a DRAGEN X0 call -> loss-of-Y -> XY.
+y_calls_loy_floor = 5
+# <= ceil confirms "no chrY signal" — used to gate "clean" XX samples
+# for the cohort median-het correction.
+y_calls_turner_ceil = 1
+
+# f_stat ~ 1 looks XY (homozygous chrX); f_stat ~ 0 looks XX (heterozygous).
+# A 103-sample CPG cohort showed clean bimodal separation around 0.5 in
+# both unnormalised and median-corrected modes, so a single midpoint is
+# the production default. Asymmetric cutoffs (e.g. 0.7 / 0.3) are valid
+# for cohorts whose distribution warrants a buffer zone around 0.5.
+#   DRAGEN XX + f_stat > xx_discordant_floor -> ambiguous
+#   DRAGEN XY + f_stat < xy_discordant_ceil  -> ambiguous
+f_stat_xx_discordant_floor = 0.5
+f_stat_xy_discordant_ceil = 0.5
 
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'

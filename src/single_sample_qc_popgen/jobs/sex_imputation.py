@@ -29,13 +29,24 @@ from single_sample_qc_popgen.utils import get_dragen_output_path
 if TYPE_CHECKING:
     from cpg_flow.targets import SequencingGroup
 
+# Defaults for thresholds used by the imputation rules. Each is overridable
+# via the `[impute_sex]` workflow config block (see
+# `config/single_sample_qc_popgen.toml`). Module-level constants double as
+# defaults for unit tests and ad-hoc invocations.
+
+# Minimum number of putative XX samples required before median correction
+# is applied. Statistical guard: a median over very few samples is noisy.
 MEDIAN_CORRECT_MIN_XX = 10
 
-# Somalier's standard panel ships ~360 chrY sites. A true XY sample typically
-# has tens-to-hundreds of called chrY sites; a true X0 (Turner) should have
-# 0-1 stochastic calls coming from chrX/Y homology and mapping noise. The
-# 1 < y_calls <= 5 gap is treated as "unusual" (likely contamination) and
-# left at the upstream call.
+# Somalier's chrY panel ships ~17 sites (the chrX panel is ~365). On a
+# 100+ sample CPG cohort, empirical class distributions on the 17-site
+# chrY panel:
+#   - True XY:           y_calls >= 15 (essentially full panel)
+#   - Normal female:     y_calls in 0-2 (mapping noise / chrX-Y homology)
+#   - True X0 / Turner:  y_calls ~ 0
+# The Y_CALLS_TURNER_CEIL < y_calls <= Y_CALLS_LOY_FLOOR gap is treated
+# as "unusual" (likely contamination or borderline LoY) and left at the
+# upstream DRAGEN call.
 #
 # `y_calls > Y_CALLS_LOY_FLOOR` on a DRAGEN X0 call -> loss-of-Y -> XY.
 Y_CALLS_LOY_FLOOR = 5
@@ -45,12 +56,16 @@ Y_CALLS_LOY_FLOOR = 5
 Y_CALLS_TURNER_CEIL = 1
 
 # f_stat ~ 1 looks XY (homozygous chrX); f_stat ~ 0 looks XX (heterozygous).
-# 0.3 < f_stat < 0.7 is the ambiguous middle band. We only flag a sample as
-# ambiguous when DRAGEN's call lands on the opposite side of that band:
+# Empirical: a 103-sample CPG cohort showed clean bimodal separation around
+# 0.5 in both unnormalised and median-corrected modes, so a single midpoint
+# is the production default. We flag a sample as ambiguous when DRAGEN's
+# call lands on the wrong side of the midpoint:
 #   DRAGEN XX + f_stat > F_STAT_XX_DISCORDANT_FLOOR -> ambiguous
 #   DRAGEN XY + f_stat < F_STAT_XY_DISCORDANT_CEIL  -> ambiguous
-F_STAT_XX_DISCORDANT_FLOOR = 0.7
-F_STAT_XY_DISCORDANT_CEIL = 0.3
+# Asymmetric cutoffs (e.g. 0.7 / 0.3) are valid configurations for cohorts
+# whose distribution warrants a buffer zone around the midpoint.
+F_STAT_XX_DISCORDANT_FLOOR = 0.5
+F_STAT_XY_DISCORDANT_CEIL = 0.5
 
 
 def parse_somalier_sketch(data: bytes) -> dict[str, int]:
@@ -123,29 +138,35 @@ def karyotype_from_signals(
     initial_karyotype: str | None,
     f_stat: float,
     y_calls: int,
+    *,
+    loy_floor: int = Y_CALLS_LOY_FLOOR,
+    xx_discordant_floor: float = F_STAT_XX_DISCORDANT_FLOOR,
+    xy_discordant_ceil: float = F_STAT_XY_DISCORDANT_CEIL,
 ) -> str | None:
     """Derive a corrected sex_karyotype from DRAGEN ploidy + somalier signals.
 
-    Rules:
-      - X0 with chrY signal (y_calls > Y_CALLS_LOY_FLOOR)       → XY  (loss-of-Y)
-      - X0 without chrY signal (y_calls <= Y_CALLS_TURNER_CEIL) → X0  (true Turner-like)
-      - DRAGEN XX but f_stat > 0.7                              → ambiguous
-      - DRAGEN XY but f_stat < 0.3                              → ambiguous
+    Rules (thresholds are kwargs with module-level defaults):
+      - DRAGEN X0 with chrY signal (y_calls > loy_floor) → XY  (loss-of-Y)
+      - DRAGEN X0 otherwise                              → X0  (no LoY rescue)
+      - DRAGEN XX but f_stat > xx_discordant_floor       → ambiguous
+      - DRAGEN XY but f_stat < xy_discordant_ceil        → ambiguous
       - Otherwise pass through (XX, XY, XXY, …).
 
-    The Y_CALLS_TURNER_CEIL < y_calls <= Y_CALLS_LOY_FLOOR gap on X0 falls
-    through to pass-through (unusual; likely contamination — flagged by
-    initial_karyotype mismatch upstream).
+    Note: y_calls in (Y_CALLS_TURNER_CEIL, loy_floor] on a DRAGEN X0 call
+    is treated as "unusual" but still returns X0 — Turner confirmation per
+    se isn't a separate output; the gap zone is just where we don't promote
+    X0 to XY. The Y_CALLS_TURNER_CEIL constant is consumed by
+    `_maybe_xx_median` as the "clean XX" gate, not here.
     """
     if initial_karyotype is None:
         return None
     if initial_karyotype == 'X0':
-        if y_calls > Y_CALLS_LOY_FLOOR:
+        if y_calls > loy_floor:
             return 'XY'
         return 'X0'
-    if initial_karyotype == 'XX' and not math.isnan(f_stat) and f_stat > F_STAT_XX_DISCORDANT_FLOOR:
+    if initial_karyotype == 'XX' and not math.isnan(f_stat) and f_stat > xx_discordant_floor:
         return 'ambiguous'
-    if initial_karyotype == 'XY' and not math.isnan(f_stat) and f_stat < F_STAT_XY_DISCORDANT_CEIL:
+    if initial_karyotype == 'XY' and not math.isnan(f_stat) and f_stat < xy_discordant_ceil:
         return 'ambiguous'
     return initial_karyotype
 
@@ -155,9 +176,18 @@ def impute_sex_for_cohort(
     ploidy_by_sg: dict[str, str | None],
     *,
     median_correct: bool = False,
+    median_correct_min_xx: int = MEDIAN_CORRECT_MIN_XX,
+    loy_floor: int = Y_CALLS_LOY_FLOOR,
+    turner_ceil: int = Y_CALLS_TURNER_CEIL,
+    xx_discordant_floor: float = F_STAT_XX_DISCORDANT_FLOOR,
+    xy_discordant_ceil: float = F_STAT_XY_DISCORDANT_CEIL,
 ) -> dict[str, dict[str, Any]]:
     """Read somalier sketches for each SG and combine with the supplied
     DRAGEN ploidy mapping to compute per-sample sex imputation metrics.
+
+    Threshold kwargs default to the module-level constants and are exposed
+    so `QCChecker` (or test code) can supply config-driven overrides
+    without the module needing to call `config_retrieve` itself.
 
     Returns a dict keyed by sg.id; each value contains:
         corrected_sex_karyotype: str | None
@@ -169,8 +199,8 @@ def impute_sex_for_cohort(
 
     Median correction (when enabled) renormalises f_stat by the cohort
     median chrX heterozygosity over putative XX samples (DRAGEN ploidy XX
-    AND y_calls <= Y_CALLS_TURNER_CEIL). Falls back to the simple proxy
-    when fewer than MEDIAN_CORRECT_MIN_XX such samples are present.
+    AND y_calls <= turner_ceil). Falls back to the simple proxy when fewer
+    than median_correct_min_xx such samples are present.
 
     Sequencing groups missing the somalier sketch are skipped with a warning.
     A missing entry in ``ploidy_by_sg`` (or a None value) is tolerated: f_stat
@@ -189,7 +219,10 @@ def impute_sex_for_cohort(
         sketch = parse_somalier_sketch(sketch_bytes)
         raw[sg.id] = {**sketch, 'ploidy_estimation': ploidy_by_sg.get(sg.id)}
 
-    xx_median_het_rate = _maybe_xx_median(raw) if median_correct else None
+    xx_median_het_rate = (
+        _maybe_xx_median(raw, turner_ceil=turner_ceil, min_xx=median_correct_min_xx)
+        if median_correct else None
+    )
 
     result: dict[str, dict[str, Any]] = {}
     for sg_id, s in raw.items():
@@ -198,7 +231,12 @@ def impute_sex_for_cohort(
             xx_median_het_rate=xx_median_het_rate,
         )
         n_called_x = s['x_hom_ref'] + s['x_het'] + s['x_hom_alt']
-        corrected = karyotype_from_signals(s['ploidy_estimation'], f_stat, s['y_calls'])
+        corrected = karyotype_from_signals(
+            s['ploidy_estimation'], f_stat, s['y_calls'],
+            loy_floor=loy_floor,
+            xx_discordant_floor=xx_discordant_floor,
+            xy_discordant_ceil=xy_discordant_ceil,
+        )
         result[sg_id] = {
             'corrected_sex_karyotype': corrected,
             'f_stat': f_stat,
@@ -210,23 +248,28 @@ def impute_sex_for_cohort(
     return result
 
 
-def _maybe_xx_median(raw: dict[str, dict[str, Any]]) -> float | None:
+def _maybe_xx_median(
+    raw: dict[str, dict[str, Any]],
+    *,
+    turner_ceil: int = Y_CALLS_TURNER_CEIL,
+    min_xx: int = MEDIAN_CORRECT_MIN_XX,
+) -> float | None:
     """Cohort median chrX het rate over putative XX samples, or None when
-    fewer than MEDIAN_CORRECT_MIN_XX such samples are present."""
+    fewer than ``min_xx`` such samples are present."""
     putative_xx_rates: list[float] = []
     for s in raw.values():
         n_called = s['x_hom_ref'] + s['x_het'] + s['x_hom_alt']
         if (
             s['ploidy_estimation'] == 'XX'
-            and s['y_calls'] <= Y_CALLS_TURNER_CEIL
+            and s['y_calls'] <= turner_ceil
             and n_called > 0
         ):
             putative_xx_rates.append(s['x_het'] / n_called)
 
-    if len(putative_xx_rates) < MEDIAN_CORRECT_MIN_XX:
+    if len(putative_xx_rates) < min_xx:
         logger.warning(
             f'median_correct requested but only {len(putative_xx_rates)} putative XX '
-            f'samples found (need >= {MEDIAN_CORRECT_MIN_XX}); falling back to simple f-stat.',
+            f'samples found (need >= {min_xx}); falling back to simple f-stat.',
         )
         return None
 

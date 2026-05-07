@@ -21,6 +21,7 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD
+from single_sample_qc_popgen.jobs import sex_imputation as si
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
 from single_sample_qc_popgen.utils import load_json
 
@@ -123,17 +124,35 @@ class QCChecker:
         self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
         self.multiqc_data = multiqc_data
         # Somalier-derived sex imputation per sg.id; empty dict for any sg
-        # missing inputs. Cohort-level XX-median correction is opt-in.
-        median_correct = config_retrieve(
-            ['impute_sex', 'median_correct_f_stat'], False,
-        )
+        # missing inputs. All thresholds default to the module-level
+        # constants in `sex_imputation`; tunable via `[impute_sex]`.
+        impute_sex_kwargs = {
+            'median_correct': config_retrieve(
+                ['impute_sex', 'median_correct_f_stat'], False,
+            ),
+            'median_correct_min_xx': config_retrieve(
+                ['impute_sex', 'median_correct_min_xx'], si.MEDIAN_CORRECT_MIN_XX,
+            ),
+            'loy_floor': config_retrieve(
+                ['impute_sex', 'y_calls_loy_floor'], si.Y_CALLS_LOY_FLOOR,
+            ),
+            'turner_ceil': config_retrieve(
+                ['impute_sex', 'y_calls_turner_ceil'], si.Y_CALLS_TURNER_CEIL,
+            ),
+            'xx_discordant_floor': config_retrieve(
+                ['impute_sex', 'f_stat_xx_discordant_floor'], si.F_STAT_XX_DISCORDANT_FLOOR,
+            ),
+            'xy_discordant_ceil': config_retrieve(
+                ['impute_sex', 'f_stat_xy_discordant_ceil'], si.F_STAT_XY_DISCORDANT_CEIL,
+            ),
+        }
         dragen_section = self.multiqc_data.get('DRAGEN_4', {})
         ploidy_by_sg: dict[str, str | None] = {
             sg.id: dragen_section.get(sg.id, {}).get('Ploidy estimation')
             for sg in self.cohort_sgs
         }
         self.sex_imputation_by_sg: dict[str, dict[str, Any]] = impute_sex_for_cohort(
-            self.cohort_sgs, ploidy_by_sg, median_correct=median_correct,
+            self.cohort_sgs, ploidy_by_sg, **impute_sex_kwargs,
         )
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
             'mean_coverage': {

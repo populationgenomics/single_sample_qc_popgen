@@ -74,15 +74,17 @@ class TestParseSomalierSketch:
     def test_no_calls_in_x_n_but_excluded_from_genotype_counts(self):
         # x_n is the total chrX site count (denominator); the genotype
         # counts only sum sites with at least one read.
+        x_hom_ref, x_het, x_hom_alt, x_no_call = 10, 5, 15, 20
+        y_calls_in, y_no_call = 2, 10
         data = _make_sketch(
-            x_hom_ref=10, x_het=5, x_hom_alt=15, x_no_call=20,
-            y_calls=2, y_no_call=10,
+            x_hom_ref=x_hom_ref, x_het=x_het, x_hom_alt=x_hom_alt, x_no_call=x_no_call,
+            y_calls=y_calls_in, y_no_call=y_no_call,
         )
         result = parse_somalier_sketch(data)
-        assert result['x_n'] == 50
-        assert result['x_hom_ref'] + result['x_het'] + result['x_hom_alt'] == 30
-        assert result['y_n'] == 12
-        assert result['y_calls'] == 2
+        assert result['x_n'] == x_hom_ref + x_het + x_hom_alt + x_no_call
+        assert result['x_hom_ref'] + result['x_het'] + result['x_hom_alt'] == x_hom_ref + x_het + x_hom_alt
+        assert result['y_n'] == y_calls_in + y_no_call
+        assert result['y_calls'] == y_calls_in
 
     def test_handles_variable_name_length(self):
         # Header skips the variable-length sample name correctly

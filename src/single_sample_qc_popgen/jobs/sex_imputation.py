@@ -16,6 +16,7 @@ followed by (n_auto + n_x + n_y) site records of 12 bytes each:
     nref (u32), nalt (u32), nother (u32).
 """
 
+import math
 import statistics
 import struct
 from typing import TYPE_CHECKING, Any
@@ -32,16 +33,24 @@ MEDIAN_CORRECT_MIN_XX = 10
 
 # Somalier's standard panel ships ~360 chrY sites. A true XY sample typically
 # has tens-to-hundreds of called chrY sites; a true X0 (Turner) should have
-# 0–1 stochastic calls coming from chrX/Y homology and mapping noise. The
+# 0-1 stochastic calls coming from chrX/Y homology and mapping noise. The
 # 1 < y_calls <= 5 gap is treated as "unusual" (likely contamination) and
 # left at the upstream call.
 #
-# `y_calls > Y_CALLS_LOY_FLOOR` on a DRAGEN X0 call → loss-of-Y → XY.
+# `y_calls > Y_CALLS_LOY_FLOOR` on a DRAGEN X0 call -> loss-of-Y -> XY.
 Y_CALLS_LOY_FLOOR = 5
 # `y_calls <= Y_CALLS_TURNER_CEIL` confirms a DRAGEN X0 call as Turner-like
 # (no chrY signal); also used to gate "clean" XX samples for the cohort
 # median-het correction.
 Y_CALLS_TURNER_CEIL = 1
+
+# f_stat ~ 1 looks XY (homozygous chrX); f_stat ~ 0 looks XX (heterozygous).
+# 0.3 < f_stat < 0.7 is the ambiguous middle band. We only flag a sample as
+# ambiguous when DRAGEN's call lands on the opposite side of that band:
+#   DRAGEN XX + f_stat > F_STAT_XX_DISCORDANT_FLOOR -> ambiguous
+#   DRAGEN XY + f_stat < F_STAT_XY_DISCORDANT_CEIL  -> ambiguous
+F_STAT_XX_DISCORDANT_FLOOR = 0.7
+F_STAT_XY_DISCORDANT_CEIL = 0.3
 
 
 def parse_somalier_sketch(data: bytes) -> dict[str, int]:
@@ -134,15 +143,11 @@ def karyotype_from_signals(
         if y_calls > Y_CALLS_LOY_FLOOR:
             return 'XY'
         return 'X0'
-    if initial_karyotype == 'XX' and not _isnan(f_stat) and f_stat > 0.7:
+    if initial_karyotype == 'XX' and not math.isnan(f_stat) and f_stat > F_STAT_XX_DISCORDANT_FLOOR:
         return 'ambiguous'
-    if initial_karyotype == 'XY' and not _isnan(f_stat) and f_stat < 0.3:
+    if initial_karyotype == 'XY' and not math.isnan(f_stat) and f_stat < F_STAT_XY_DISCORDANT_CEIL:
         return 'ambiguous'
     return initial_karyotype
-
-
-def _isnan(x: float) -> bool:
-    return x != x
 
 
 def impute_sex_for_cohort(

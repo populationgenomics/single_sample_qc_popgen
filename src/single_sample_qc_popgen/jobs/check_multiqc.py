@@ -133,17 +133,17 @@ class QCChecker:
             'median_correct_min_xx': config_retrieve(
                 ['impute_sex', 'median_correct_min_xx'], si.MEDIAN_CORRECT_MIN_XX,
             ),
-            'loy_floor': config_retrieve(
-                ['impute_sex', 'y_calls_loy_floor'], si.Y_CALLS_LOY_FLOOR,
+            'loy_min': config_retrieve(
+                ['impute_sex', 'y_calls_loy_min'], si.Y_CALLS_LOY_MIN,
             ),
-            'turner_ceil': config_retrieve(
-                ['impute_sex', 'y_calls_turner_ceil'], si.Y_CALLS_TURNER_CEIL,
+            'turner_max': config_retrieve(
+                ['impute_sex', 'y_calls_turner_max'], si.Y_CALLS_TURNER_MAX,
             ),
-            'xx_discordant_floor': config_retrieve(
-                ['impute_sex', 'f_stat_xx_discordant_floor'], si.F_STAT_XX_DISCORDANT_FLOOR,
+            'xx_max': config_retrieve(
+                ['impute_sex', 'f_stat_xx_max'], si.F_STAT_XX_MAX,
             ),
-            'xy_discordant_ceil': config_retrieve(
-                ['impute_sex', 'f_stat_xy_discordant_ceil'], si.F_STAT_XY_DISCORDANT_CEIL,
+            'xy_min': config_retrieve(
+                ['impute_sex', 'f_stat_xy_min'], si.F_STAT_XY_MIN,
             ),
         }
         dragen_section = self.multiqc_data.get('DRAGEN_4', {})

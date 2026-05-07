@@ -13,8 +13,8 @@ import pytest
 
 from single_sample_qc_popgen.jobs.sex_imputation import (
     MEDIAN_CORRECT_MIN_XX,
-    Y_CALLS_LOY_FLOOR,
-    Y_CALLS_TURNER_CEIL,
+    Y_CALLS_LOY_MIN,
+    Y_CALLS_TURNER_MAX,
     _maybe_xx_median,
     compute_f_stat,
     karyotype_from_signals,
@@ -149,14 +149,14 @@ class TestComputeFStat:
 class TestKaryotypeFromSignals:
     def test_loy_x0_with_y_signal_becomes_xy(self):
         # DRAGEN called X0 but somalier sees clear Y signal → loss-of-Y
-        assert karyotype_from_signals('X0', f_stat=0.95, y_calls=Y_CALLS_LOY_FLOOR + 1) == 'XY'
+        assert karyotype_from_signals('X0', f_stat=0.95, y_calls=Y_CALLS_LOY_MIN + 1) == 'XY'
 
     def test_true_x0_no_y_signal(self):
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_TURNER_CEIL) == 'X0'
+        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_TURNER_MAX) == 'X0'
 
     def test_x0_with_borderline_y_signal_passes_through(self):
-        # Y_CALLS_TURNER_CEIL < y_calls <= Y_CALLS_LOY_FLOOR — unusual; not promoted to XY.
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_LOY_FLOOR) == 'X0'
+        # Y_CALLS_TURNER_MAX < y_calls <= Y_CALLS_LOY_MIN — unusual; not promoted to XY.
+        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_LOY_MIN) == 'X0'
 
     def test_xx_with_male_fstat_is_ambiguous(self):
         assert karyotype_from_signals('XX', f_stat=0.95, y_calls=15) == 'ambiguous'
@@ -185,15 +185,15 @@ class TestKaryotypeFromSignals:
         # but passes through if a less-strict 0.7 floor is supplied.
         assert karyotype_from_signals('XX', f_stat=0.6, y_calls=0) == 'ambiguous'
         assert karyotype_from_signals(
-            'XX', f_stat=0.6, y_calls=0, xx_discordant_floor=0.7,
+            'XX', f_stat=0.6, y_calls=0, xx_max=0.7,
         ) == 'XX'
 
-    def test_loy_floor_override(self):
-        # Default loy_floor=5: y_calls=4 on X0 stays X0. With loy_floor=3, same
+    def test_loy_min_override(self):
+        # Default loy_min=5: y_calls=4 on X0 stays X0. With loy_min=3, same
         # sample is promoted to XY.
         assert karyotype_from_signals('X0', f_stat=0.5, y_calls=4) == 'X0'
         assert karyotype_from_signals(
-            'X0', f_stat=0.5, y_calls=4, loy_floor=3,
+            'X0', f_stat=0.5, y_calls=4, loy_min=3,
         ) == 'XY'
 
 
@@ -226,9 +226,9 @@ class TestMaybeXxMedian:
         assert _maybe_xx_median(raw) is None
 
     def test_xx_with_y_signal_excluded(self):
-        # Putative XX must have y_calls <= Y_CALLS_TURNER_CEIL to count as "clean" XX.
+        # Putative XX must have y_calls <= Y_CALLS_TURNER_MAX to count as "clean" XX.
         contaminated = dict(_XX_RAW)
-        contaminated['y_calls'] = Y_CALLS_TURNER_CEIL + 1
+        contaminated['y_calls'] = Y_CALLS_TURNER_MAX + 1
         raw = {f'sg{i}': dict(contaminated) for i in range(20)}
         assert _maybe_xx_median(raw) is None
 
@@ -240,11 +240,11 @@ class TestMaybeXxMedian:
         assert _maybe_xx_median(raw) is None
         assert _maybe_xx_median(raw, min_xx=n) == pytest.approx(0.30, abs=1e-6)
 
-    def test_turner_ceil_override_widens_clean_xx_gate(self):
-        # Default turner_ceil=1 excludes y_calls=2 samples. A more permissive
+    def test_turner_max_override_widens_clean_xx_gate(self):
+        # Default turner_max=1 excludes y_calls=2 samples. A more permissive
         # override admits them.
         sample = dict(_XX_RAW)
         sample['y_calls'] = 2
         raw = {f'sg{i}': dict(sample) for i in range(MEDIAN_CORRECT_MIN_XX)}
         assert _maybe_xx_median(raw) is None
-        assert _maybe_xx_median(raw, turner_ceil=2) == pytest.approx(0.30, abs=1e-6)
+        assert _maybe_xx_median(raw, turner_max=2) == pytest.approx(0.30, abs=1e-6)

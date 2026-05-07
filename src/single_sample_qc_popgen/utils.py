@@ -28,8 +28,8 @@ def initialise_python_job(
     return py_job
 
 
-def get_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:
-    """Gets a path in the final 'output' directory."""
+def get_dragen_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:
+    """Gets a path in the DRAGEN 'output' directory (`ica/<dragen_version>/output/...`)."""
     return cpg_utils.to_path(output_path(f'ica/{DRAGEN_VERSION}/output/{filename}', category=category))
 
 

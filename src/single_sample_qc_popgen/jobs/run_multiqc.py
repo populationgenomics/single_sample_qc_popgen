@@ -11,7 +11,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
 
-from single_sample_qc_popgen.utils import get_output_path, get_qc_path
+from single_sample_qc_popgen.utils import get_dragen_output_path, get_qc_path
 
 
 def run_multiqc(
@@ -25,7 +25,7 @@ def run_multiqc(
     # 1. Collect all individual Dragen CSV file paths
     all_dragen_csv_paths: list[Path] = []
     for sg in cohort.get_sequencing_groups():
-        dragen_prefix = get_output_path(filename=f'dragen_metrics/{sg.name}')
+        dragen_prefix = get_dragen_output_path(filename=f'dragen_metrics/{sg.name}')
 
         try:
             # Use rglob to find all CSV files recursively within the SG's metric directory

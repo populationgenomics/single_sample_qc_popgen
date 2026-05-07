@@ -5,7 +5,7 @@ Files are read via cpg_utils.Path
 so this module can be invoked from inside or outside a Hail Batch job.
 
 Two signals are combined per sequencing group:
-- DRAGEN ploidy estimation (from ploidy_estimation_metrics.csv)
+- DRAGEN ploidy estimation (passed in per-SG; sourced from MultiQC's DRAGEN_4 section)
 - somalier sketch (chrX/chrY allele counts on a fixed sites panel)
 
 The somalier sketch is a binary file produced by `somalier extract` upstream
@@ -87,32 +87,6 @@ def parse_somalier_sketch(data: bytes) -> dict[str, int]:
     }
 
 
-def parse_dragen_ploidy(data: str) -> dict[str, Any]:
-    """Parse a DRAGEN ploidy_estimation_metrics.csv text body.
-
-    Each line is `PLOIDY ESTIMATION,,<metric>,<value>`. Returns the three
-    fields needed downstream; missing fields come back as None.
-    """
-    result: dict[str, Any] = {
-        'ploidy_estimation': None,
-        'norm_x_coverage': None,
-        'norm_y_coverage': None,
-    }
-    for raw_line in data.splitlines():
-        parts = [p.strip() for p in raw_line.split(',')]
-        if len(parts) < 4:
-            continue
-        metric = parts[2]
-        value = parts[3]
-        if metric == 'Ploidy estimation':
-            result['ploidy_estimation'] = value or None
-        elif metric == 'X median / Autosomal median' and value:
-            result['norm_x_coverage'] = float(value)
-        elif metric == 'Y median / Autosomal median' and value:
-            result['norm_y_coverage'] = float(value)
-    return result
-
-
 def compute_f_stat(
     x_het: int,
     x_hom_ref: int,
@@ -173,11 +147,12 @@ def _isnan(x: float) -> bool:
 
 def impute_sex_for_cohort(
     cohort_sgs: 'list[SequencingGroup]',
+    ploidy_by_sg: dict[str, str | None],
     *,
     median_correct: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Read somalier sketches + DRAGEN ploidy CSVs for each SG and compute
-    per-sample sex imputation metrics.
+    """Read somalier sketches for each SG and combine with the supplied
+    DRAGEN ploidy mapping to compute per-sample sex imputation metrics.
 
     Returns a dict keyed by sg.id; each value contains:
         corrected_sex_karyotype: str | None
@@ -192,25 +167,22 @@ def impute_sex_for_cohort(
     AND y_calls <= Y_CALLS_TURNER_CEIL). Falls back to the simple proxy
     when fewer than MEDIAN_CORRECT_MIN_XX such samples are present.
 
-    Sequencing groups missing either input file are skipped with a warning.
+    Sequencing groups missing the somalier sketch are skipped with a warning.
+    A missing entry in ``ploidy_by_sg`` (or a None value) is tolerated: f_stat
+    and y_calls are still computed, and corrected_sex_karyotype falls through
+    to None.
     """
     raw: dict[str, dict[str, Any]] = {}
     for sg in cohort_sgs:
-        # somalier sketch is keyed by sg.id; DRAGEN dir is keyed by sg.name
         somalier_path = get_dragen_output_path(f'somalier/{sg.id}.somalier')
-        ploidy_path = get_dragen_output_path(
-            f'dragen_metrics/{sg.name}/{sg.name}.ploidy_estimation_metrics.csv',
-        )
         try:
             sketch_bytes = somalier_path.read_bytes()
-            ploidy_text = ploidy_path.read_text()
         except (FileNotFoundError, CloudPathFileNotFoundError) as e:
             logger.warning(f'Skipping sex imputation for {sg.id}: {e}')
             continue
 
         sketch = parse_somalier_sketch(sketch_bytes)
-        ploidy = parse_dragen_ploidy(ploidy_text)
-        raw[sg.id] = {**sketch, 'ploidy_estimation': ploidy['ploidy_estimation']}
+        raw[sg.id] = {**sketch, 'ploidy_estimation': ploidy_by_sg.get(sg.id)}
 
     xx_median_het_rate = _maybe_xx_median(raw) if median_correct else None
 

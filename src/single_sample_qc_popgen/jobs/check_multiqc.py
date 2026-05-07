@@ -127,8 +127,13 @@ class QCChecker:
         median_correct = config_retrieve(
             ['impute_sex', 'median_correct_f_stat'], False,
         )
+        dragen_section = self.multiqc_data.get('DRAGEN_4', {})
+        ploidy_by_sg: dict[str, str | None] = {
+            sg.id: dragen_section.get(sg.id, {}).get('Ploidy estimation')
+            for sg in self.cohort_sgs
+        }
         self.sex_imputation_by_sg: dict[str, dict[str, Any]] = impute_sex_for_cohort(
-            self.cohort_sgs, median_correct=median_correct,
+            self.cohort_sgs, ploidy_by_sg, median_correct=median_correct,
         )
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
             'mean_coverage': {

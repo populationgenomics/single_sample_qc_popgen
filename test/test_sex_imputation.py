@@ -18,7 +18,6 @@ from single_sample_qc_popgen.jobs.sex_imputation import (
     _maybe_xx_median,
     compute_f_stat,
     karyotype_from_signals,
-    parse_dragen_ploidy,
     parse_somalier_sketch,
 )
 
@@ -178,43 +177,6 @@ class TestKaryotypeFromSignals:
     def test_nan_fstat_does_not_trigger_ambiguous(self):
         assert karyotype_from_signals('XX', f_stat=float('nan'), y_calls=0) == 'XX'
         assert karyotype_from_signals('XY', f_stat=float('nan'), y_calls=16) == 'XY'
-
-
-# ---------------------------------------------------------------------------
-# parse_dragen_ploidy
-# ---------------------------------------------------------------------------
-
-class TestParseDragenPloidy:
-    def test_xx_metrics(self):
-        csv = (
-            'PLOIDY ESTIMATION,,Autosomal median coverage,30.5\n'
-            'PLOIDY ESTIMATION,,X median / Autosomal median,0.94\n'
-            'PLOIDY ESTIMATION,,Y median / Autosomal median,0.0\n'
-            'PLOIDY ESTIMATION,,Ploidy estimation,XX\n'
-        )
-        assert parse_dragen_ploidy(csv) == {
-            'ploidy_estimation': 'XX',
-            'norm_x_coverage': 0.94,
-            'norm_y_coverage': 0.0,
-        }
-
-    def test_xy_metrics(self):
-        csv = (
-            'PLOIDY ESTIMATION,,X median / Autosomal median,0.5\n'
-            'PLOIDY ESTIMATION,,Y median / Autosomal median,0.45\n'
-            'PLOIDY ESTIMATION,,Ploidy estimation,XY\n'
-        )
-        result = parse_dragen_ploidy(csv)
-        assert result['ploidy_estimation'] == 'XY'
-        assert result['norm_x_coverage'] == 0.5
-        assert result['norm_y_coverage'] == 0.45
-
-    def test_missing_fields_return_none(self):
-        csv = 'PLOIDY ESTIMATION,,Some other field,42\n'
-        result = parse_dragen_ploidy(csv)
-        assert result['ploidy_estimation'] is None
-        assert result['norm_x_coverage'] is None
-        assert result['norm_y_coverage'] is None
 
 
 # ---------------------------------------------------------------------------

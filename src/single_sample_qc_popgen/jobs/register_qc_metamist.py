@@ -157,13 +157,13 @@ def update_sg_qc_metrics(
         sg_meta['qc'].update(sex_imputation_by_sg.get(sg.id, {}))
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
         logger.info(f'Updating SG {sg.id} with meta: {sg_meta}')
-        metamist_proj = cohort.dataset.name
+        metamist_project = cohort.dataset.name
         if get_access_level() == 'test':
-            metamist_proj += '-test'
+            metamist_project += '-test'
         result_update_mutation = query(
             MUTATION_SEQUENCING_GROUP,
             variables={
-                'project': metamist_proj,
+                'project': metamist_project,
                 'sequencingGroup': {
                     'id': sg.id,
                     'meta': sg_meta,

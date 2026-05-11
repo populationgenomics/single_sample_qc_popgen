@@ -88,12 +88,13 @@ class CheckMultiQc(CohortStage):
 class RegisterQcMetricsToMetamist(CohortStage):
     """
     Registers QC metrics from MultiQC in the sequencing group 'meta' field in Metamist.
-    The following metrics are registered:
+    The following metrics are registered under sg.meta['qc']:
+
+    MultiQC-derived (from build_sg_multiqc_meta_dict):
         contamination_dragen: float
         mean_coverage: float
         median_coverage: float
         pct_genome_gt_20x: float
-        pct_q30_bases: float
         q30_bases_pct: float
         mapping_rate_pct: float
         chimera_alignments: float
@@ -102,11 +103,21 @@ class RegisterQcMetricsToMetamist(CohortStage):
         mean_insert_size: float
         std_dev_insert_size: float
         avg_gc_content: float
-        ploidy_estimation: str,
-        norm_x_coverage: float,
-        norm_y_coverage: float,
-        ti_tv_ratio: float,
-        het_hom_ratio: float,
+        ploidy_estimation: str
+        norm_x_coverage: float
+        norm_y_coverage: float
+        ti_tv_ratio: float
+        het_hom_ratio: float
+
+    Somalier-derived sex imputation (merged in from CheckMultiQc):
+        corrected_sex_karyotype: str | None
+        f_stat_raw: float
+        x_het_rate: float
+        n_called_x: int
+        y_calls: int
+        y_n: int
+
+    QC outcome:
         qc_checks_failed: list[str]
 
     Optionally deactivates sequencing groups that failed QC checks. Toggleable via the following config:

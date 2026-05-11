@@ -153,7 +153,7 @@ def update_sg_qc_metrics(
         sg_meta ={}
         sg_meta['qc'] = meta_to_update.get(sg.id, {})
         # Merge somalier-derived sex imputation fields (corrected_sex_karyotype,
-        # f_stat, x_het_rate, n_called_x, y_calls, y_n) alongside MultiQC metrics.
+        # f_stat_raw, x_het_rate, n_called_x, y_calls, y_n) alongside MultiQC metrics.
         sg_meta['qc'].update(sex_imputation_by_sg.get(sg.id, {}))
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
         logger.info(f'Updating SG {sg.id} with meta: {sg_meta}')

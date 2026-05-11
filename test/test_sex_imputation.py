@@ -12,10 +12,7 @@ import struct
 import pytest
 
 from single_sample_qc_popgen.jobs.sex_imputation import (
-    MEDIAN_CORRECT_MIN_XX,
     Y_CALLS_LOY_MIN,
-    Y_CALLS_TURNER_MAX,
-    _maybe_xx_median,
     compute_f_stat,
     karyotype_from_signals,
     parse_somalier_sketch,
@@ -101,45 +98,31 @@ class TestParseSomalierSketch:
 
 
 # ---------------------------------------------------------------------------
-# compute_f_stat — verify the f-stat formula with clean fractions
+# compute_f_stat — verify the raw f-stat formula with clean fractions
 # ---------------------------------------------------------------------------
 
 class TestComputeFStat:
     def test_high_het_rate_low_f_stat(self):
-        # het_rate = 4/10 = 0.4 → f_stat = 1 - 0.8 = 0.2 (XX-like)
-        het_rate, f_stat = compute_f_stat(x_het=4, x_hom_ref=3, x_hom_alt=3)
+        # het_rate = 4/10 = 0.4 → f_stat_raw = 1 - 0.8 = 0.2 (XX-like)
+        het_rate, f_stat_raw = compute_f_stat(x_het=4, x_hom_ref=3, x_hom_alt=3)
         assert het_rate == pytest.approx(0.4)
-        assert f_stat == pytest.approx(0.2)
+        assert f_stat_raw == pytest.approx(0.2)
 
     def test_zero_het_rate_max_f_stat(self):
-        # het_rate = 0 → f_stat = 1 (XY-like, no chrX hets)
-        het_rate, f_stat = compute_f_stat(x_het=0, x_hom_ref=5, x_hom_alt=5)
+        # het_rate = 0 → f_stat_raw = 1 (XY-like, no chrX hets)
+        het_rate, f_stat_raw = compute_f_stat(x_het=0, x_hom_ref=5, x_hom_alt=5)
         assert het_rate == 0.0
-        assert f_stat == 1.0
+        assert f_stat_raw == 1.0
 
     def test_low_het_rate_high_f_stat(self):
-        # het_rate = 1/10 = 0.1 → f_stat = 1 - 0.2 = 0.8 (XY-like)
-        _, f_stat = compute_f_stat(x_het=1, x_hom_ref=4, x_hom_alt=5)
-        assert f_stat == pytest.approx(0.8)
+        # het_rate = 1/10 = 0.1 → f_stat_raw = 1 - 0.2 = 0.8 (XY-like)
+        _, f_stat_raw = compute_f_stat(x_het=1, x_hom_ref=4, x_hom_alt=5)
+        assert f_stat_raw == pytest.approx(0.8)
 
     def test_zero_calls_returns_nan(self):
-        het_rate, f_stat = compute_f_stat(0, 0, 0)
+        het_rate, f_stat_raw = compute_f_stat(0, 0, 0)
         assert math.isnan(het_rate)
-        assert math.isnan(f_stat)
-
-    def test_median_correction_centres_xx(self):
-        # When het_rate equals the cohort XX median, corrected f_stat = 0
-        _, f_stat = compute_f_stat(
-            x_het=32, x_hom_ref=34, x_hom_alt=34, xx_median_het_rate=0.32,
-        )
-        assert f_stat == pytest.approx(0.0, abs=1e-6)
-
-    def test_median_correction_no_hets_yields_one(self):
-        # All-hom male: het_rate = 0 → corrected f_stat = 1
-        _, f_stat = compute_f_stat(
-            x_het=0, x_hom_ref=100, x_hom_alt=0, xx_median_het_rate=0.32,
-        )
-        assert f_stat == pytest.approx(1.0, abs=1e-6)
+        assert math.isnan(f_stat_raw)
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +135,10 @@ class TestKaryotypeFromSignals:
         assert karyotype_from_signals('X0', f_stat=0.95, y_calls=Y_CALLS_LOY_MIN + 1) == 'XY'
 
     def test_true_x0_no_y_signal(self):
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_TURNER_MAX) == 'X0'
+        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=0) == 'X0'
 
     def test_x0_with_borderline_y_signal_passes_through(self):
-        # Y_CALLS_TURNER_MAX < y_calls <= Y_CALLS_LOY_MIN — unusual; not promoted to XY.
+        # y_calls <= Y_CALLS_LOY_MIN — unusual; not promoted to XY.
         assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_LOY_MIN) == 'X0'
 
     def test_xx_with_male_fstat_is_ambiguous(self):
@@ -195,56 +178,3 @@ class TestKaryotypeFromSignals:
         assert karyotype_from_signals(
             'X0', f_stat=0.5, y_calls=4, loy_min=3,
         ) == 'XY'
-
-
-# ---------------------------------------------------------------------------
-# _maybe_xx_median (cohort-level guard)
-# ---------------------------------------------------------------------------
-
-# x_het / n_called = 30/100 = 0.30 — a typical XX het rate
-_XX_RAW = {
-    'x_hom_ref': 35, 'x_het': 30, 'x_hom_alt': 35,
-    'ploidy_estimation': 'XX', 'y_calls': 0,
-}
-
-
-class TestMaybeXxMedian:
-    def test_returns_median_when_threshold_met(self):
-        raw = {f'sg{i}': dict(_XX_RAW) for i in range(MEDIAN_CORRECT_MIN_XX)}
-        assert _maybe_xx_median(raw) == pytest.approx(0.30, abs=1e-6)
-
-    def test_falls_back_below_threshold(self):
-        raw = {f'sg{i}': dict(_XX_RAW) for i in range(MEDIAN_CORRECT_MIN_XX - 1)}
-        assert _maybe_xx_median(raw) is None
-
-    def test_xy_samples_excluded(self):
-        xy = {
-            'x_hom_ref': 100, 'x_het': 5, 'x_hom_alt': 100,
-            'ploidy_estimation': 'XY', 'y_calls': 16,
-        }
-        raw = {f'sg{i}': dict(xy) for i in range(20)}
-        assert _maybe_xx_median(raw) is None
-
-    def test_xx_with_y_signal_excluded(self):
-        # Putative XX must have y_calls <= Y_CALLS_TURNER_MAX to count as "clean" XX.
-        contaminated = dict(_XX_RAW)
-        contaminated['y_calls'] = Y_CALLS_TURNER_MAX + 1
-        raw = {f'sg{i}': dict(contaminated) for i in range(20)}
-        assert _maybe_xx_median(raw) is None
-
-    def test_min_xx_override_lowers_threshold(self):
-        # A pilot cohort below the default MIN_XX can opt into median-correction
-        # by lowering min_xx via config.
-        n = MEDIAN_CORRECT_MIN_XX - 1
-        raw = {f'sg{i}': dict(_XX_RAW) for i in range(n)}
-        assert _maybe_xx_median(raw) is None
-        assert _maybe_xx_median(raw, min_xx=n) == pytest.approx(0.30, abs=1e-6)
-
-    def test_turner_max_override_widens_clean_xx_gate(self):
-        # Default turner_max=1 excludes y_calls=2 samples. A more permissive
-        # override admits them.
-        sample = dict(_XX_RAW)
-        sample['y_calls'] = 2
-        raw = {f'sg{i}': dict(sample) for i in range(MEDIAN_CORRECT_MIN_XX)}
-        assert _maybe_xx_median(raw) is None
-        assert _maybe_xx_median(raw, turner_max=2) == pytest.approx(0.30, abs=1e-6)

@@ -127,17 +127,8 @@ class QCChecker:
         # missing inputs. All thresholds default to the module-level
         # constants in `sex_imputation`; tunable via `[impute_sex]`.
         impute_sex_kwargs = {
-            'median_correct': config_retrieve(
-                ['impute_sex', 'median_correct_f_stat'], False,
-            ),
-            'median_correct_min_xx': config_retrieve(
-                ['impute_sex', 'median_correct_min_xx'], si.MEDIAN_CORRECT_MIN_XX,
-            ),
             'loy_min': config_retrieve(
                 ['impute_sex', 'y_calls_loy_min'], si.Y_CALLS_LOY_MIN,
-            ),
-            'turner_max': config_retrieve(
-                ['impute_sex', 'y_calls_turner_max'], si.Y_CALLS_TURNER_MAX,
             ),
             'xx_max': config_retrieve(
                 ['impute_sex', 'f_stat_xx_max'], si.F_STAT_XX_MAX,
@@ -504,11 +495,11 @@ def run(
 
     # --- Somalier-derived ambiguous karyotype check ---
     # Hard discordance between DRAGEN ploidy and somalier f-stat
-    # (e.g. DRAGEN XX with f_stat > 0.7) — caught even when DRAGEN agrees
+    # (e.g. DRAGEN XX with f_stat_raw > 0.7) — caught even when DRAGEN agrees
     # with reported sex, so it adds to the strict-equality check above.
     for sg_id, sex_data in qc_checker.sex_imputation_by_sg.items():
         if sex_data.get('corrected_sex_karyotype') == 'ambiguous':
-            f_stat = sex_data.get('f_stat')
+            f_stat_raw = sex_data.get('f_stat_raw')
             y_calls = sex_data.get('y_calls')
             ploidy_estimation = None
             for section_data in qc_checker.multiqc_data.values():
@@ -517,7 +508,7 @@ def run(
                     break
             line = (
                 f'Sex Karyotype ambiguous '
-                f'(DRAGEN={ploidy_estimation}, f_stat={f_stat:.4f}, y_calls={y_calls})'
+                f'(DRAGEN={ploidy_estimation}, f_stat_raw={f_stat_raw:.4f}, y_calls={y_calls})'
             )
             logger.warning(f'❗ {sg_id}: {line}')
             bad_lines_by_sample[sg_id].append(line)

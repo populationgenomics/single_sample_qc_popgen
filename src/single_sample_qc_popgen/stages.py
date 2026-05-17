@@ -109,13 +109,14 @@ class RegisterQcMetricsToMetamist(CohortStage):
         ti_tv_ratio: float
         het_hom_ratio: float
 
-    Somalier-derived sex imputation (merged in from CheckMultiQc):
-        corrected_sex_karyotype: str | None
+    Somalier-derived raw signals (merged in from CheckMultiQc):
         f_stat_raw: float
         x_het_rate: float
         n_called_x: int
         y_calls: int
         y_n: int
+    Karyotype derivation (LoY rescue, ambiguous gate) lives downstream in
+    ourdna_genomic_atlas.
 
     QC outcome:
         qc_checks_failed: list[str]

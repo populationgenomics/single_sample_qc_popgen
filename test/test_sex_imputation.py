@@ -12,9 +12,7 @@ import struct
 import pytest
 
 from single_sample_qc_popgen.jobs.sex_imputation import (
-    Y_CALLS_LOY_MIN,
     compute_f_stat,
-    karyotype_from_signals,
     parse_somalier_sketch,
 )
 
@@ -123,58 +121,3 @@ class TestComputeFStat:
         het_rate, f_stat_raw = compute_f_stat(0, 0, 0)
         assert math.isnan(het_rate)
         assert math.isnan(f_stat_raw)
-
-
-# ---------------------------------------------------------------------------
-# karyotype_from_signals — verify the rule table
-# ---------------------------------------------------------------------------
-
-class TestKaryotypeFromSignals:
-    def test_loy_x0_with_y_signal_becomes_xy(self):
-        # DRAGEN called X0 but somalier sees clear Y signal → loss-of-Y
-        assert karyotype_from_signals('X0', f_stat=0.95, y_calls=Y_CALLS_LOY_MIN + 1) == 'XY'
-
-    def test_true_x0_no_y_signal(self):
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=0) == 'X0'
-
-    def test_x0_with_borderline_y_signal_passes_through(self):
-        # y_calls <= Y_CALLS_LOY_MIN — unusual; not promoted to XY.
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=Y_CALLS_LOY_MIN) == 'X0'
-
-    def test_xx_with_male_fstat_is_ambiguous(self):
-        assert karyotype_from_signals('XX', f_stat=0.95, y_calls=15) == 'ambiguous'
-
-    def test_xy_with_female_fstat_is_ambiguous(self):
-        assert karyotype_from_signals('XY', f_stat=0.20, y_calls=0) == 'ambiguous'
-
-    def test_xx_passthrough(self):
-        assert karyotype_from_signals('XX', f_stat=0.35, y_calls=0) == 'XX'
-
-    def test_xy_passthrough(self):
-        assert karyotype_from_signals('XY', f_stat=0.96, y_calls=16) == 'XY'
-
-    def test_xxy_passthrough(self):
-        assert karyotype_from_signals('XXY', f_stat=0.6, y_calls=15) == 'XXY'
-
-    def test_none_returns_none(self):
-        assert karyotype_from_signals(None, f_stat=0.5, y_calls=0) is None
-
-    def test_nan_fstat_does_not_trigger_ambiguous(self):
-        assert karyotype_from_signals('XX', f_stat=float('nan'), y_calls=0) == 'XX'
-        assert karyotype_from_signals('XY', f_stat=float('nan'), y_calls=16) == 'XY'
-
-    def test_threshold_overrides_flip_classification(self):
-        # f_stat=0.6 on a DRAGEN XX sample: ambiguous under default 0.5 floor,
-        # but passes through if a less-strict 0.7 floor is supplied.
-        assert karyotype_from_signals('XX', f_stat=0.6, y_calls=0) == 'ambiguous'
-        assert karyotype_from_signals(
-            'XX', f_stat=0.6, y_calls=0, xx_max=0.7,
-        ) == 'XX'
-
-    def test_loy_min_override(self):
-        # Default loy_min=5: y_calls=4 on X0 stays X0. With loy_min=3, same
-        # sample is promoted to XY.
-        assert karyotype_from_signals('X0', f_stat=0.5, y_calls=4) == 'X0'
-        assert karyotype_from_signals(
-            'X0', f_stat=0.5, y_calls=4, loy_min=3,
-        ) == 'XY'

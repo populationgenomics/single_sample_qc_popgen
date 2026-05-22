@@ -56,6 +56,31 @@ y_calls_turner_max = 1
 f_stat_xx_max = 0.5
 f_stat_xy_min = 0.5
 
+[workflow.swap_check]
+# Thresholds for swap classification — calibrated against COH8495 (expected
+# self-matches sat at relatedness ~0.999 with n ~5800). Generous margins
+# given the >0.6 gap between true match and next-best.
+relatedness_concordant_min = 0.8
+relatedness_swap_max = 0.3
+n_sites_min = 500
+
+# Parallel workers for `gcloud storage cp` of WGS sketches inside the
+# somalier container (matches the manifest pattern used by run_multiqc).
+somalier_localise_parallelism = 16
+
+# REQUIRED in the user's analysis-runner config (no defaults here): pgen,
+# pvar, psam paths of the rolling popgen-genotyping export. These analyses
+# are NOT registered in metamist, so the path can't be looked up and must
+# be set explicitly. The stage will error at queue time if any is missing.
+# Example:
+#     pgen_path = 'gs://.../<DATE>_cohort.pgen'
+#     pvar_path = 'gs://.../<DATE>_cohort.pvar'
+#     psam_path = 'gs://.../<DATE>_cohort.psam'
+#
+# Container images come from image_path('plink') / image_path('somalier')
+# and references (somalier sites VCF, hg38 fasta) come from reference_path()
+# — neither is configured here.
+
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'
 

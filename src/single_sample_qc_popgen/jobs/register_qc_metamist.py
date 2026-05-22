@@ -139,6 +139,7 @@ def update_sg_qc_metrics(
         failed_samples: dict[str, list[str]],
         meta_to_update: dict[str, Any],
         sex_imputation_by_sg: dict[str, dict[str, Any]],
+        swap_check_by_sg: dict[str, dict[str, Any]],
         cohort: Cohort,
         output: cpg_utils.Path
     ) -> dict[str, list[str]]:
@@ -155,6 +156,15 @@ def update_sg_qc_metrics(
         # Merge somalier-derived sex imputation fields (corrected_sex_karyotype,
         # f_stat, x_het_rate, n_called_x, y_calls, y_n) alongside MultiQC metrics.
         sg_meta['qc'].update(sex_imputation_by_sg.get(sg.id, {}))
+        # Merge swap-check fields under a nested 'swap_check' key so the
+        # status taxonomy is grouped and won't collide with MultiQC metrics.
+        # Mapping-layer statuses (e.g. array_pending_export) carry no
+        # somalier fields; comparison-layer statuses include best_array_sg
+        # / best_relatedness / n_sites_compared. swap_detected is a
+        # labelling problem and is intentionally NOT wired into
+        # qc_checks_failed or deactivate_sgs.
+        if sg.id in swap_check_by_sg:
+            sg_meta['qc']['swap_check'] = swap_check_by_sg[sg.id]
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
         logger.info(f'Updating SG {sg.id} with meta: {sg_meta}')
         metamist_project = cohort.dataset.name
@@ -192,6 +202,7 @@ def run(
     multiqc_data_path: str,
     failures_path: str,
     sex_imputation_path: str,
+    swap_check_path: str,
     output: cpg_utils.Path,
 ):
 
@@ -201,11 +212,13 @@ def run(
     )
     failed_samples = load_json(failures_path, allow_missing=True) or {}
     sex_imputation_by_sg = load_json(sex_imputation_path, allow_missing=True) or {}
+    swap_check_by_sg = load_json(swap_check_path, allow_missing=True) or {}
 
     update_sg_qc_metrics(
         failed_samples=failed_samples,
         meta_to_update=multiqc_data,
         sex_imputation_by_sg=sex_imputation_by_sg,
+        swap_check_by_sg=swap_check_by_sg,
         cohort=cohort,
         output=output,
     )

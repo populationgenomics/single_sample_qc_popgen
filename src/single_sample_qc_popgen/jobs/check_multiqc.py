@@ -415,7 +415,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
     logger.info(text)
 
     # 3. Send to Slack if enabled
-    if config_retrieve(['workflow', 'multiqc', 'send_to_slack'], default=True):
+    if config_retrieve(['workflow', 'send_to_slack'], default=True):
         send_message(text)
     else:
         logger.info('Skipping Slack notification as per config.')

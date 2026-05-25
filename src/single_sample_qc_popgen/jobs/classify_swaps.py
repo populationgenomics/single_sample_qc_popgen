@@ -244,11 +244,11 @@ def run(
     with to_path(output).open('w') as f:
         json.dump(swap_check_by_sg, f, indent=2)
 
-    # High-alert Slack message, separate post from the MultiQC failures
-    # report. Only sent when there's at least one swap_detected -- absence
-    # of a message means "no swap signal", consistent with the cohort's
-    # MultiQC report being the primary fact-gathering view.
-    if config_retrieve(['workflow', 'multiqc', 'send_to_slack'], default=True):
+    # High-alert Slack message. Only sent when there's at least one
+    # swap_detected -- absence of a message means "no swap signal",
+    # consistent with the cohort's MultiQC report being the primary
+    # fact-gathering view.
+    if config_retrieve(['workflow', 'send_to_slack'], default=True):
         message = build_swap_detected_slack_message(cohort.id, swap_check_by_sg)
         if message is not None:
             logger.warning(message)

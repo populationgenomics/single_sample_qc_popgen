@@ -3,13 +3,17 @@ name = 'single_sample_qc_popgen'
 input_cohorts = ['COH0000']
 sequencing_type = 'genome'
 last_stages = ['RegisterQcMetricsToMetamist']
+# Pipeline-wide Slack flag. Governs every QC notification this pipeline
+# emits: the MultiQC failures report (check_multiqc.post_to_slack) and
+# the swap-detected alert (classify_swaps.run). Channel + token live in
+# the [slack] block below.
+send_to_slack = true
 
 [cramqc]
 assume_sorted = true
 num_pcs = 4
 
 [workflow.multiqc]
-send_to_slack = true
 # If true, will deactivate any sequencing groups that fail any of the qc_thresholds.
 deactivate_sgs = false
 

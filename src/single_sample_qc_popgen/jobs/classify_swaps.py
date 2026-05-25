@@ -1,36 +1,36 @@
 """
-PythonJob entrypoint for ``SwapCheckClassify``: parse the somalier
-``pairs.tsv``, join against the WGS-to-array mapping (resolved by the
-upstream ``SwapCheckExportVcf`` stage), and emit the per-SG
-``swap_check.json`` consumed by ``register_qc_metamist.py``.
+Pure-logic helpers for the ``SwapCheckClassify`` stage.
 
-Also sends a high-alert Slack post when any ``swap_detected`` SGs are
-present. The Slack post is a separate message from the MultiQC failures
-report (posted earlier by ``check_multiqc.post_to_slack``); the two
-messages land in the same channel and read as sequential sections of the
-cohort's QC summary.
+The job entrypoint that drives these (parses CLI args, reads inputs,
+writes outputs, posts to Slack) lives in ``classify_swaps_job.py`` and is
+invoked from a BashJob via ``python3 -m
+single_sample_qc_popgen.jobs.classify_swaps_job``.
 
-Thresholds (relatedness cutoffs, minimum site count) live in the TOML
-under ``[workflow.swap_check]``; ``run()`` reads them with no Python-side
-fallback so a missing config key raises rather than silently using a
-hardcoded number.
+Status taxonomy:
+    concordant            -- best somalier-relate match IS the expected
+                             array SG (relatedness >= concordant_min,
+                             n >= n_min).
+    swap_detected         -- best match is a DIFFERENT array SG with
+                             relatedness >= concordant_min (the actionable
+                             swap signal).
+    discordant_no_match   -- best relatedness < swap_max: looks unrelated
+                             to every array sample in the cohort.
+    ambiguous             -- best relatedness in (swap_max, concordant_min).
+    insufficient_sites    -- best pair n < n_min (sites panel mismatch).
+    no_array_sg /
+    array_pending_export /
+    multiple_array_sgs /
+    missing_sample        -- pass-through from the mapping classifier.
 """
 
 from __future__ import annotations
 
 import csv
-import json
 from typing import TYPE_CHECKING, Any
 
 from cpg_utils import to_path
-from cpg_utils.config import config_retrieve
-from cpg_utils.slack import send_message
-from loguru import logger
-
-from single_sample_qc_popgen.utils import load_json
 
 if TYPE_CHECKING:
-    from cpg_flow.targets import Cohort
     from cpg_utils import Path
 
 
@@ -203,53 +203,3 @@ def build_swap_detected_slack_message(
     return '\n'.join(lines)
 
 
-def run(
-    cohort: Cohort,
-    mapping_path: str,
-    pairs_tsv_path: str,
-    output: Path,
-) -> None:
-    """PythonJob entry: load inputs, classify, write swap_check.json, alert.
-
-    ``mapping_path`` and ``pairs_tsv_path`` are outputs from
-    ``SwapCheckExportVcf`` and ``SwapCheckSomalierRelate`` respectively.
-    ``cohort`` is used for logging and Slack-message context.
-    """
-    mapping: list[dict[str, Any]] = load_json(mapping_path)
-    pairs = parse_pairs_tsv(pairs_tsv_path)
-
-    swap_check_by_sg = classify_swap_check(
-        mapping,
-        pairs,
-        concordant_min=config_retrieve(['workflow', 'swap_check', 'relatedness_concordant_min']),
-        swap_max=config_retrieve(['workflow', 'swap_check', 'relatedness_swap_max']),
-        n_min=config_retrieve(['workflow', 'swap_check', 'n_sites_min']),
-    )
-
-    summary: dict[str, int] = {}
-    for v in swap_check_by_sg.values():
-        summary[v['status']] = summary.get(v['status'], 0) + 1
-    logger.info(f'[SwapCheckClassify] cohort={cohort.id} summary={summary}')
-
-    # Log every swap_detected SG before writing the JSON so the run log
-    # carries a copy too (Slack can rate-limit / drop messages).
-    for sg_id, v in swap_check_by_sg.items():
-        if v['status'] == 'swap_detected':
-            logger.warning(
-                f'❗ {sg_id} (expected {v.get("expected_array_sg")}) '
-                f'best match is {v.get("best_array_sg")} '
-                f'(rel={v.get("best_relatedness"):.3f}, n={v.get("n_sites_compared")})',
-            )
-
-    with to_path(output).open('w') as f:
-        json.dump(swap_check_by_sg, f, indent=2)
-
-    # High-alert Slack message. Only sent when there's at least one
-    # swap_detected -- absence of a message means "no swap signal",
-    # consistent with the cohort's MultiQC report being the primary
-    # fact-gathering view.
-    if config_retrieve(['workflow', 'send_to_slack'], default=True):
-        message = build_swap_detected_slack_message(cohort.id, swap_check_by_sg)
-        if message is not None:
-            logger.warning(message)
-            send_message(message)

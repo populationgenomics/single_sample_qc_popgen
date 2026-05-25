@@ -22,7 +22,6 @@ from cpg_utils import to_path
 from metamist.graphql import gql, query
 
 if TYPE_CHECKING:
-    from cpg_flow.targets import Cohort
     from cpg_utils import Path
 
 
@@ -50,7 +49,7 @@ QUERY_WGS_TO_ARRAY_MAPPING = gql(
 )
 
 
-def query_wgs_to_array_mapping(cohort: Cohort) -> list[dict[str, Any]]:
+def query_wgs_to_array_mapping(cohort_id: str) -> list[dict[str, Any]]:
     """Run the metamist query and flatten to one record per WGS SG.
 
     Each record carries the WGS SG ID, sample external ID, sample-present
@@ -58,10 +57,10 @@ def query_wgs_to_array_mapping(cohort: Cohort) -> list[dict[str, Any]]:
     array SG IDs for the same biological sample. Classification against the
     pgen psam happens in ``classify_wgs_to_array_mapping``.
     """
-    response = query(QUERY_WGS_TO_ARRAY_MAPPING, variables={'cohortId': cohort.id})
+    response = query(QUERY_WGS_TO_ARRAY_MAPPING, variables={'cohortId': cohort_id})
     cohorts = response.get('cohorts') or []
     if not cohorts:
-        raise RuntimeError(f'No cohort returned from metamist for id {cohort.id}')
+        raise RuntimeError(f'No cohort returned from metamist for id {cohort_id}')
     cohort_sgs = cohorts[0]['sequencingGroups']
 
     records: list[dict[str, Any]] = []

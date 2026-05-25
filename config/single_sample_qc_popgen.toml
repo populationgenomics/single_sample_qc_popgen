@@ -29,36 +29,10 @@ chimera_rate = 0.03
 [qc_thresholds.genome.equality]
 ploidy_estimation = true
 
-[impute_sex]
-# Renormalise somalier f_stat by the cohort median chrX heterozygosity
-# over putative XX samples. Requires >= median_correct_min_xx putative XX
-# samples; otherwise falls back to the simple proxy with a logged warning.
-median_correct_f_stat = false
-
-# Minimum number of putative XX samples required before median correction
-# is applied. Statistical guard: a median over very few samples is noisy.
-median_correct_min_xx = 10
-
-# Somalier's chrY panel ships ~17 sites (chrX panel is ~365). On a 100+
-# sample CPG cohort: true XY has y_calls >= 15, normal female 0-2,
-# true X0/Turner ~0. Tune for different somalier panels or sequencing
-# depths.
-# y_calls > y_calls_loy_min on a DRAGEN X0 call -> loss-of-Y -> XY.
-y_calls_loy_min = 5
-# y_calls <= y_calls_turner_max confirms "no chrY signal" — used to gate
-# "clean" XX samples for the cohort median-het correction.
-y_calls_turner_max = 1
-
-# f_stat ~ 1 looks XY (homozygous chrX); f_stat ~ 0 looks XX (heterozygous).
-# A 103-sample CPG cohort showed clean bimodal separation around 0.5 in
-# both unnormalised and median-corrected modes, so a single midpoint is
-# the production default. Asymmetric cutoffs (e.g. f_stat_xx_max=0.7 and
-# f_stat_xy_min=0.3) are valid for cohorts whose distribution warrants a
-# buffer zone around 0.5.
-#   DRAGEN XX + f_stat > f_stat_xx_max -> ambiguous
-#   DRAGEN XY + f_stat < f_stat_xy_min -> ambiguous
-f_stat_xx_max = 0.5
-f_stat_xy_min = 0.5
+# Sex-karyotype derivation (LoY rescue, raw-f-stat ambiguous gate) lives
+# downstream in ourdna_genomic_atlas, alongside the ancestry-aware f-stat
+# renormalisation that shares the same raw signals. This repo emits raw
+# somalier signals (f_stat_raw, x_het_rate, y_calls, …) only.
 
 [workflow.swap_check]
 # Thresholds for swap classification — calibrated against COH8495 (expected

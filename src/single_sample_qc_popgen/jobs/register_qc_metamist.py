@@ -153,8 +153,9 @@ def update_sg_qc_metrics(
     for sg in cohort_sgs:
         sg_meta ={}
         sg_meta['qc'] = meta_to_update.get(sg.id, {})
-        # Merge somalier-derived sex imputation fields (corrected_sex_karyotype,
-        # f_stat, x_het_rate, n_called_x, y_calls, y_n) alongside MultiQC metrics.
+        # Merge somalier-derived raw signals (f_stat_raw, x_het_rate,
+        # n_called_x, y_calls, y_n) alongside MultiQC metrics. Karyotype
+        # derivation is performed downstream in ourdna_genomic_atlas.
         sg_meta['qc'].update(sex_imputation_by_sg.get(sg.id, {}))
         # Merge swap-check fields under a nested 'swap_check' key so the
         # status taxonomy is grouped and won't collide with MultiQC metrics.

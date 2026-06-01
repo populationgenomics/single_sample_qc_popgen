@@ -201,5 +201,3 @@ def build_swap_detected_slack_message(
             f'n_sites_compared={v.get("n_sites_compared")})',
         )
     return '\n'.join(lines)
-
-

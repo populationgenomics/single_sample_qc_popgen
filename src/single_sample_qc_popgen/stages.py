@@ -90,7 +90,7 @@ class CheckMultiQc(CohortStage):
 @stage(required_stages=[CheckMultiQc])
 class PrepareSampleSwap(CohortStage):
     """
-    First of four swap-check stages. Resolves the WGS↔array mapping by
+    First of five swap-check stages. Resolves the WGS↔array mapping by
     running ``prepare_sample_swap_job.py`` on a worker via the driver image:
     queries metamist, reads the rolling pgen psam, classifies each WGS SG,
     and writes three artifacts:
@@ -150,7 +150,7 @@ class PrepareSampleSwap(CohortStage):
 @stage(required_stages=[PrepareSampleSwap])
 class SwapCheckExportVcf(CohortStage):
     """
-    Second of four swap-check stages. Subsets the rolling popgen-genotyping
+    Second of five swap-check stages. Subsets the rolling popgen-genotyping
     pgen to the cohort's array SGs using the keep file produced by
     ``PrepareSampleSwap``, exports a bgzipped VCF.
 
@@ -214,20 +214,111 @@ class SwapCheckExportVcf(CohortStage):
         return self.make_outputs(target=cohort, data=output, jobs=j)  # pyright: ignore[reportArgumentType]
 
 
-@stage(required_stages=[PrepareSampleSwap, SwapCheckExportVcf])
-class SwapCheckSomalierRelate(CohortStage):
+@stage(required_stages=[SwapCheckExportVcf])
+class SwapCheckSomalierExtract(CohortStage):
     """
-    Third of four swap-check stages. Runs ``somalier extract`` on the array
-    VCF from ``SwapCheckExportVcf``, localises every WGS ``.somalier``
-    sketch listed in the manifest from ``PrepareSampleSwap`` (via
-    ``gcloud storage cp | xargs`` — the somalier image has gcloud), then
-    runs ``somalier relate`` all-vs-all → ``<cohort>.pairs.tsv``.
+    Third of five swap-check stages. Runs ``somalier extract`` on the array
+    VCF from ``SwapCheckExportVcf`` to produce one ``.somalier`` sketch per
+    array sample, then persists each sketch to GCS for provenance under this
+    stage's standard cohort-scoped output prefix.
+
+    Previously the array sketches were generated and consumed inside the
+    same ``somalier relate`` BashJob and never written anywhere, so there
+    was no record of the array fingerprints.
 
     The sites VCF MUST match what dragen_align_pa used to produce the
     upstream WGS sketches; mismatched panels silently yield n=0 in relate
     output.
 
-    If the upstream manifest is empty (0-ready case), the BashJob skips
+    Per-array-sample ``.somalier`` filenames are the array IIDs, which are
+    only known at runtime (from the metamist mapping + pgen psam), so they
+    can't be enumerated in ``expected_outputs``. The tracked output is
+    therefore a deterministic ``manifest`` listing the GCS path of every
+    saved sketch (one per line) — the same pattern ``PrepareSampleSwap``
+    uses for the WGS sketches — which ``SwapCheckSomalierRelate`` localises
+    from. In the 0-ready case ``SwapCheckExportVcf`` writes an empty
+    placeholder VCF; this stage detects it, writes an empty manifest, and
+    no-ops.
+    """
+    def expected_outputs(self, cohort: Cohort) -> dict[str, cpg_utils.Path]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return {
+            'manifest': get_output_prefix(cohort, self.name) / f'{cohort.id}_array_sketch_manifest.txt',
+        }
+
+    def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
+        outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
+
+        sites_vcf_path = str(reference_path('somalier_sites'))
+        fasta_ref_path = str(reference_path('broad/ref_fasta'))
+
+        # somalier names each output by the VCF sample (the array IID), so
+        # sketches land as <prefix>/<array_iid>.somalier. The prefix is the
+        # standard cohort-scoped stage output (already ends in <cohort.id>).
+        array_sketch_prefix = get_output_prefix(cohort, self.name)
+
+        b = get_batch()
+        j = b.new_bash_job(
+            name=f'SwapCheckSomalierExtract {cohort.id}',
+            attributes=(cohort.get_job_attrs() or {}) | {'tool': 'somalier'},
+        )
+        j.image(image_path('somalier'))
+        j.cpu(config_retrieve(['workflow', 'swap_check', 'somalier_cpu'], 4))
+        j.memory(config_retrieve(['workflow', 'swap_check', 'somalier_memory'], 'standard'))
+        j.storage(config_retrieve(['workflow', 'swap_check', 'somalier_storage'], '50G'))
+
+        sites = b.read_input(sites_vcf_path)
+        fasta = b.read_input_group(base=fasta_ref_path, fai=f'{fasta_ref_path}.fai')
+        array_vcf = b.read_input(str(inputs.as_path(cohort, stage=SwapCheckExportVcf)))
+
+        j.command(
+            f"""
+            set -euo pipefail
+
+            # If SwapCheckExportVcf emitted an empty placeholder VCF (0-ready
+            # case), skip somalier and write an empty manifest so the relate
+            # stage no-ops cleanly.
+            if [[ ! -s {array_vcf} ]]; then
+                echo "[SwapCheckSomalierExtract] array VCF is empty; skipping somalier extract"
+                : > {j.manifest}
+                exit 0
+            fi
+
+            mkdir -p array_somalier
+            somalier extract \\
+                --sites {sites} \\
+                --fasta {fasta.base} \\
+                --out-dir array_somalier/ \\
+                {array_vcf}
+
+            # Persist each array sketch to GCS for provenance and record its
+            # GCS destination in the manifest (image has gcloud). The manifest
+            # line is written only after a successful copy, so it never
+            # references a sketch that failed to upload.
+            gcloud auth list > /dev/null
+            : > {j.manifest}
+            for sketch in array_somalier/*.somalier; do
+                dest="{array_sketch_prefix}/$(basename "$sketch")"
+                gcloud storage cp -- "$sketch" "$dest"
+                echo "$dest" >> {j.manifest}
+            done
+            """,
+        )
+
+        b.write_output(j.manifest, str(outputs['manifest']))
+        return self.make_outputs(target=cohort, data=outputs, jobs=j)  # pyright: ignore[reportArgumentType]
+
+
+@stage(required_stages=[PrepareSampleSwap, SwapCheckSomalierExtract])
+class SwapCheckSomalierRelate(CohortStage):
+    """
+    Fourth of five swap-check stages. Localises the WGS ``.somalier``
+    sketches listed in the manifest from ``PrepareSampleSwap`` and the array
+    ``.somalier`` sketches listed in the manifest from
+    ``SwapCheckSomalierExtract`` (both via ``gcloud storage cp | xargs`` —
+    the somalier image has gcloud), then runs ``somalier relate`` all-vs-all
+    → ``<cohort>.pairs.tsv``.
+
+    If the upstream WGS manifest is empty (0-ready case), the BashJob skips
     somalier and writes an empty pairs.tsv (header only).
     """
     def expected_outputs(self, cohort: Cohort) -> cpg_utils.Path:
@@ -237,8 +328,6 @@ class SwapCheckSomalierRelate(CohortStage):
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
         parallel_localise = config_retrieve(['workflow', 'swap_check', 'somalier_localise_parallelism'], 16)
-        sites_vcf_path = str(reference_path('somalier_sites'))
-        fasta_ref_path = str(reference_path('broad/ref_fasta'))
 
         b = get_batch()
         j = b.new_bash_job(
@@ -250,10 +339,8 @@ class SwapCheckSomalierRelate(CohortStage):
         j.memory(config_retrieve(['workflow', 'swap_check', 'somalier_memory'], 'standard'))
         j.storage(config_retrieve(['workflow', 'swap_check', 'somalier_storage'], '50G'))
 
-        sites = b.read_input(sites_vcf_path)
-        fasta = b.read_input_group(base=fasta_ref_path, fai=f'{fasta_ref_path}.fai')
-        manifest = b.read_input(str(inputs.as_path(cohort, stage=PrepareSampleSwap, key='manifest')))
-        array_vcf = b.read_input(str(inputs.as_path(cohort, stage=SwapCheckExportVcf)))
+        wgs_manifest = b.read_input(str(inputs.as_path(cohort, stage=PrepareSampleSwap, key='manifest')))
+        array_manifest = b.read_input(str(inputs.as_path(cohort, stage=SwapCheckSomalierExtract, key='manifest')))
 
         j.declare_resource_group(relate_output={'pairs.tsv': '{root}.pairs.tsv'})
 
@@ -261,26 +348,21 @@ class SwapCheckSomalierRelate(CohortStage):
             f"""
             set -euo pipefail
 
-            # If PrepareSampleSwap emitted an empty manifest (0-ready case),
-            # skip somalier and produce an empty pairs.tsv with just the
-            # header so downstream classify reads cleanly.
-            if [[ ! -s {manifest} ]]; then
-                echo "[SwapCheckSomalierRelate] manifest is empty; skipping somalier"
+            # If PrepareSampleSwap emitted an empty WGS manifest (0-ready
+            # case), skip somalier and produce an empty pairs.tsv with just
+            # the header so downstream classify reads cleanly.
+            if [[ ! -s {wgs_manifest} ]]; then
+                echo "[SwapCheckSomalierRelate] WGS manifest is empty; skipping somalier"
                 printf '#sample_a\\tsample_b\\trelatedness\\tibs0\\tn\\n' > {j.relate_output['pairs.tsv']}
                 exit 0
             fi
 
             mkdir -p wgs_somalier array_somalier
 
-            # Localise WGS .somalier sketches in parallel (image has gcloud).
+            # Localise WGS and array .somalier sketches in parallel (image has gcloud).
             gcloud auth list > /dev/null
-            cat {manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} wgs_somalier/
-
-            somalier extract \\
-                --sites {sites} \\
-                --fasta {fasta.base} \\
-                --out-dir array_somalier/ \\
-                {array_vcf}
+            cat {wgs_manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} wgs_somalier/
+            cat {array_manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} array_somalier/
 
             somalier relate \\
                 -o {j.relate_output} \\
@@ -295,7 +377,7 @@ class SwapCheckSomalierRelate(CohortStage):
 @stage(required_stages=[PrepareSampleSwap, SwapCheckSomalierRelate])
 class SwapCheckClassify(CohortStage):
     """
-    Fourth of four swap-check stages. Parses the somalier pairs.tsv, joins
+    Fifth of five swap-check stages. Parses the somalier pairs.tsv, joins
     against the classified WGS↔array mapping from ``PrepareSampleSwap``,
     and emits the per-SG ``swap_check.json`` consumed by
     ``RegisterQcMetricsToMetamist``.

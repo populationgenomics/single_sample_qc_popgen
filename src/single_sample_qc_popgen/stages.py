@@ -14,11 +14,17 @@ if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 from cpg_flow.workflow import get_workflow
 from cpg_utils import Path
-from cpg_utils.config import config_retrieve, get_driver_image, image_path, output_path, reference_path
+from cpg_utils.config import config_retrieve, get_driver_image, image_path, output_path
 from cpg_utils.hail_batch import get_batch
 
 from single_sample_qc_popgen.constants import DRAGEN_VERSION
-from single_sample_qc_popgen.jobs import check_multiqc, register_qc_metamist, run_multiqc
+from single_sample_qc_popgen.jobs import (
+    check_multiqc,
+    register_qc_metamist,
+    run_multiqc,
+    somalier_extract,
+    somalier_relate,
+)
 from single_sample_qc_popgen.utils import initialise_python_job
 
 
@@ -248,63 +254,16 @@ class SwapCheckSomalierExtract(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-        sites_vcf_path = str(reference_path('somalier_sites'))
-        fasta_ref_path = str(reference_path('broad/ref_fasta'))
-
-        # somalier names each output by the VCF sample (the array IID), so
-        # sketches land as <prefix>/<array_iid>.somalier. The prefix is the
-        # standard cohort-scoped stage output (already ends in <cohort.id>).
-        array_sketch_prefix = get_output_prefix(cohort, self.name)
-
-        b = get_batch()
-        j = b.new_bash_job(
-            name=f'SwapCheckSomalierExtract {cohort.id}',
-            attributes=(cohort.get_job_attrs() or {}) | {'tool': 'somalier'},
-        )
-        j.image(image_path('somalier'))
-        j.cpu(config_retrieve(['workflow', 'swap_check', 'somalier_cpu'], 4))
-        j.memory(config_retrieve(['workflow', 'swap_check', 'somalier_memory'], 'standard'))
-        j.storage(config_retrieve(['workflow', 'swap_check', 'somalier_storage'], '50G'))
-
-        sites = b.read_input(sites_vcf_path)
-        fasta = b.read_input_group(base=fasta_ref_path, fai=f'{fasta_ref_path}.fai')
-        array_vcf = b.read_input(str(inputs.as_path(cohort, stage=SwapCheckExportVcf)))
-
-        j.command(
-            f"""
-            set -euo pipefail
-
-            # If SwapCheckExportVcf emitted an empty placeholder VCF (0-ready
-            # case), skip somalier and write an empty manifest so the relate
-            # stage no-ops cleanly.
-            if [[ ! -s {array_vcf} ]]; then
-                echo "[SwapCheckSomalierExtract] array VCF is empty; skipping somalier extract"
-                : > {j.manifest}
-                exit 0
-            fi
-
-            mkdir -p array_somalier
-            somalier extract \\
-                --sites {sites} \\
-                --fasta {fasta.base} \\
-                --out-dir array_somalier/ \\
-                {array_vcf}
-
-            # Persist each array sketch to GCS for provenance and record its
-            # GCS destination in the manifest (image has gcloud). The manifest
-            # line is written only after a successful copy, so it never
-            # references a sketch that failed to upload.
-            gcloud auth list > /dev/null
-            : > {j.manifest}
-            for sketch in array_somalier/*.somalier; do
-                dest="{array_sketch_prefix}/$(basename "$sketch")"
-                gcloud storage cp -- "$sketch" "$dest"
-                echo "$dest" >> {j.manifest}
-            done
-            """,
+        j: BashJob = somalier_extract.somalier_extract(
+            cohort=cohort,
+            array_vcf_path=inputs.as_path(cohort, stage=SwapCheckExportVcf),
+            # somalier names each output by the VCF sample (the array IID), so
+            # sketches land as <prefix>/<array_iid>.somalier. The prefix is the
+            # standard cohort-scoped stage output (already ends in <cohort.id>).
+            array_sketch_prefix=get_output_prefix(cohort, self.name),
+            output_manifest=outputs['manifest'],
         )
 
-        b.write_output(j.manifest, str(outputs['manifest']))
         return self.make_outputs(target=cohort, data=outputs, jobs=j)  # pyright: ignore[reportArgumentType]
 
 
@@ -327,50 +286,13 @@ class SwapCheckSomalierRelate(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
-        parallel_localise = config_retrieve(['workflow', 'swap_check', 'somalier_localise_parallelism'], 16)
-
-        b = get_batch()
-        j = b.new_bash_job(
-            name=f'SwapCheckSomalierRelate {cohort.id}',
-            attributes=(cohort.get_job_attrs() or {}) | {'tool': 'somalier'},
-        )
-        j.image(image_path('somalier'))
-        j.cpu(config_retrieve(['workflow', 'swap_check', 'somalier_cpu'], 4))
-        j.memory(config_retrieve(['workflow', 'swap_check', 'somalier_memory'], 'standard'))
-        j.storage(config_retrieve(['workflow', 'swap_check', 'somalier_storage'], '50G'))
-
-        wgs_manifest = b.read_input(str(inputs.as_path(cohort, stage=PrepareSampleSwap, key='manifest')))
-        array_manifest = b.read_input(str(inputs.as_path(cohort, stage=SwapCheckSomalierExtract, key='manifest')))
-
-        j.declare_resource_group(relate_output={'pairs.tsv': '{root}.pairs.tsv'})
-
-        j.command(
-            f"""
-            set -euo pipefail
-
-            # If PrepareSampleSwap emitted an empty WGS manifest (0-ready
-            # case), skip somalier and produce an empty pairs.tsv with just
-            # the header so downstream classify reads cleanly.
-            if [[ ! -s {wgs_manifest} ]]; then
-                echo "[SwapCheckSomalierRelate] WGS manifest is empty; skipping somalier"
-                printf '#sample_a\\tsample_b\\trelatedness\\tibs0\\tn\\n' > {j.relate_output['pairs.tsv']}
-                exit 0
-            fi
-
-            mkdir -p wgs_somalier array_somalier
-
-            # Localise WGS and array .somalier sketches in parallel (image has gcloud).
-            gcloud auth list > /dev/null
-            cat {wgs_manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} wgs_somalier/
-            cat {array_manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} array_somalier/
-
-            somalier relate \\
-                -o {j.relate_output} \\
-                wgs_somalier/*.somalier array_somalier/*.somalier
-            """,
+        j: BashJob = somalier_relate.somalier_relate(
+            cohort=cohort,
+            wgs_manifest_path=inputs.as_path(cohort, stage=PrepareSampleSwap, key='manifest'),
+            array_manifest_path=inputs.as_path(cohort, stage=SwapCheckSomalierExtract, key='manifest'),
+            output_pairs_tsv=output,
         )
 
-        b.write_output(j.relate_output['pairs.tsv'], str(output))
         return self.make_outputs(target=cohort, data=output, jobs=j)  # pyright: ignore[reportArgumentType]
 
 

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from cpg_utils import Path
 
 
-def parse_pairs_tsv(pairs_tsv_path: str | 'Path') -> list[dict[str, Any]]:
+def parse_pairs_tsv(pairs_tsv_path: str | Path) -> list[dict[str, Any]]:
     """Parse a somalier pairs.tsv into a list of row dicts.
 
     Header line starts with ``#sample_a``; we strip the leading '#' so

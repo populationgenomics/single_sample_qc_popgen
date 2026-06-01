@@ -78,7 +78,7 @@ def query_wgs_to_array_mapping(cohort_id: str) -> list[dict[str, Any]]:
     return records
 
 
-def read_psam_array_sgs(psam_path: str | 'Path') -> set[str]:
+def read_psam_array_sgs(psam_path: str | Path) -> set[str]:
     """Read a plink2 psam and return the set of IIDs.
 
     Handles both local and cloud (gs://) paths via cpg_utils.to_path.

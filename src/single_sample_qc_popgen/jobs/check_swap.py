@@ -33,7 +33,7 @@ RELATEDNESS_SWAP_MAX = 0.3
 N_SITES_MIN = 500
 
 
-def parse_pairs_tsv(pairs_tsv_path: str | 'Path') -> list[dict[str, Any]]:
+def parse_pairs_tsv(pairs_tsv_path: str | Path) -> list[dict[str, Any]]:
     """Parse a somalier pairs.tsv into a list of row dicts.
 
     Header line starts with ``#sample_a``; we strip the leading '#' so

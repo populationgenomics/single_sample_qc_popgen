@@ -93,7 +93,7 @@ class CheckMultiQc(CohortStage):
         return self.make_outputs(target=cohort, data=outputs, jobs=qc_checks_job)  # pyright: ignore[reportArgumentType]
 
 
-@stage(required_stages=[CheckMultiQc])
+@stage()
 class PrepareSampleSwap(CohortStage):
     """
     First of five swap-check stages. Resolves the WGS↔array mapping by

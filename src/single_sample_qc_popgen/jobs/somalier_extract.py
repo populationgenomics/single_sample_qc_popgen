@@ -66,7 +66,9 @@ def somalier_extract(
 
     sites = b.read_input(sites_vcf_path)
     fasta = b.read_input_group(base=fasta_ref_path, fai=f'{fasta_ref_path}.fai')
-    array_vcf = b.read_input(str(array_vcf_path))
+    array_vcf = b.read_input_group(
+        **{'vcf.gz': str(array_vcf_path), 'vcf.gz.tbi': f'{array_vcf_path}.tbi'},
+    )
 
     j.command(
         f"""
@@ -75,7 +77,7 @@ def somalier_extract(
         # If SwapCheckExportVcf emitted an empty placeholder VCF (0-ready
         # case), skip somalier and write an empty manifest so the relate
         # stage no-ops cleanly.
-        if [[ ! -s {array_vcf} ]]; then
+        if [[ ! -s {array_vcf['vcf.gz']} ]]; then
             echo "[SwapCheckSomalierExtract] array VCF is empty; skipping somalier extract"
             : > {j.manifest}
             exit 0
@@ -86,7 +88,7 @@ def somalier_extract(
             --sites {sites} \\
             --fasta {fasta.base} \\
             --out-dir array_somalier/ \\
-            {array_vcf}
+            {array_vcf['vcf.gz']}
 
         # Persist each array sketch to GCS for provenance and record its
         # GCS destination in the manifest (image has gcloud). The manifest

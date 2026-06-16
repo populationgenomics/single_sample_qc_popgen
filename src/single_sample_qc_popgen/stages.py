@@ -190,18 +190,19 @@ class SwapCheckExportVcf(CohortStage):
 
         pgen = b.read_input_group(pgen=pgen_path, pvar=pvar_path, psam=psam_path)
         keep = b.read_input(str(inputs.as_path(cohort, stage=PrepareSampleSwap, key='keep')))
-        j.declare_resource_group(array_vcf={'vcf.gz': '{root}.vcf.gz'})
+        j.declare_resource_group(array_vcf={'vcf.gz': '{root}.vcf.gz', 'vcf.gz.tbi': '{root}.vcf.gz.tbi'})
 
         j.command(
             f"""
             set -euo pipefail
 
             # If PrepareSampleSwap emitted an empty keep file (0-ready case),
-            # skip plink and produce an empty placeholder VCF. Downstream
-            # somalier stage detects the empty manifest and skips too.
+            # skip plink and produce empty placeholder VCF + index. Downstream
+            # somalier stage detects the empty VCF and skips too.
             if [[ ! -s {keep} ]]; then
                 echo "[SwapCheckExportVcf] keep file is empty; skipping plink2"
                 : > {j.array_vcf['vcf.gz']}
+                : > {j.array_vcf['vcf.gz.tbi']}
                 exit 0
             fi
 
@@ -213,10 +214,13 @@ class SwapCheckExportVcf(CohortStage):
                    --output-chr chrM \\
                    --export vcf bgz id-paste=iid \\
                    --out {j.array_vcf}
+
+            tabix -p vcf {j.array_vcf['vcf.gz']}
             """,
         )
 
         b.write_output(j.array_vcf['vcf.gz'], str(output))
+        b.write_output(j.array_vcf['vcf.gz.tbi'], str(output) + '.tbi')
         return self.make_outputs(target=cohort, data=output, jobs=j)  # pyright: ignore[reportArgumentType]
 
 

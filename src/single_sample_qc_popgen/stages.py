@@ -183,7 +183,7 @@ class SwapCheckExportVcf(CohortStage):
             name=f'SwapCheckExportVcf {cohort.id}',
             attributes=(cohort.get_job_attrs() or {}) | {'tool': 'plink2'},
         )
-        j.image(image_path('plink'))
+        j.image(image_path('plink', '1.9-20250819-PLINK-2.0-20260228-2'))
         j.cpu(config_retrieve(['workflow', 'swap_check', 'plink2_cpu'], 2))
         j.memory(config_retrieve(['workflow', 'swap_check', 'plink2_memory'], 'standard'))
         j.storage(config_retrieve(['workflow', 'swap_check', 'plink2_storage'], '50G'))

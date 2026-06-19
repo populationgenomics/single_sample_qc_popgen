@@ -29,6 +29,16 @@ from single_sample_qc_popgen.metamist_utils import derive_pgen_sibling_paths, qu
 from single_sample_qc_popgen.utils import initialise_python_job
 
 
+def resolve_array_pgen_paths(cohort_id: str) -> tuple[str, str, str]:
+    """(pgen, pvar, psam) from config if set (dev override), else from metamist."""
+    pgen = config_retrieve(['workflow', 'swap_check', 'pgen_path'], None)
+    if pgen:
+        pvar = config_retrieve(['workflow', 'swap_check', 'pvar_path'])
+        psam = config_retrieve(['workflow', 'swap_check', 'psam_path'])
+        return pgen, pvar, psam
+    return derive_pgen_sibling_paths(query_array_pgen_path(cohort_id))
+
+
 def get_output_prefix(cohort: Cohort, stage_name: str, category: str | None = None) -> Path:
     """
     Standardised output prefix for CohortStage outputs.
@@ -123,10 +133,8 @@ class PrepareSampleSwap(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-        # The rolling array_aggregate_pgen is registered against the cohort in
-        # metamist; look up its .pgen and derive the psam (only the psam is
-        # needed here, to read the array SG IIDs present in the export).
-        _, _, psam_path = derive_pgen_sibling_paths(query_array_pgen_path(cohort.id))
+        # Only the psam is needed here, to read the array SG IIDs in the export.
+        _, _, psam_path = resolve_array_pgen_paths(cohort.id)
 
         # Template for the upstream WGS sketches. {{sg_id}} survives the
         # f-string as the literal placeholder the script formats per SG.
@@ -175,9 +183,7 @@ class SwapCheckExportVcf(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
-        # array_aggregate_pgen .pgen path comes from metamist (registered
-        # against the cohort); the .pvar/.psam sit alongside it.
-        pgen_path, pvar_path, psam_path = derive_pgen_sibling_paths(query_array_pgen_path(cohort.id))
+        pgen_path, pvar_path, psam_path = resolve_array_pgen_paths(cohort.id)
 
         b = get_batch()
         j = b.new_bash_job(

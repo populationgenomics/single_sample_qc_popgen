@@ -46,10 +46,16 @@ n_sites_min = 500
 # somalier container (matches the manifest pattern used by run_multiqc).
 somalier_localise_parallelism = 16
 
-# The rolling popgen-genotyping pgen/pvar/psam paths are NOT configured here.
-# They are looked up at queue time from the cohort's array_aggregate_pgen
-# analysis in metamist (outputs.path is the .pgen; .pvar/.psam sit alongside
-# it). The stage errors at queue time if no such analysis is registered.
+# The rolling popgen-genotyping pgen/pvar/psam paths are looked up at queue
+# time from the cohort's array_aggregate_pgen analysis in metamist
+# (outputs.path is the .pgen; .pvar/.psam sit alongside it). The stage errors
+# at queue time if no such analysis is registered.
+#
+# For development against data not yet registered in metamist, set pgen_path
+# (+ pvar_path/psam_path) here to override the lookup:
+#     pgen_path = 'gs://.../<DATE>_cohort.pgen'
+#     pvar_path = 'gs://.../<DATE>_cohort.pvar'
+#     psam_path = 'gs://.../<DATE>_cohort.psam'
 #
 # Container images come from image_path('plink') / image_path('somalier')
 # and references (somalier sites VCF, hg38 fasta) come from reference_path()

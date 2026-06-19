@@ -94,7 +94,6 @@ def somalier_extract(
         # GCS destination in the manifest (image has gcloud). The manifest
         # line is written only after a successful copy, so it never
         # references a sketch that failed to upload.
-        gcloud auth list > /dev/null
         : > {j.manifest}
         for sketch in array_somalier/*.somalier; do
             dest="{array_sketch_prefix}/$(basename "$sketch")"

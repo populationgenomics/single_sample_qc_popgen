@@ -81,7 +81,6 @@ def somalier_relate(
         mkdir -p wgs_somalier array_somalier
 
         # Localise WGS and array .somalier sketches in parallel (image has gcloud).
-        gcloud auth list > /dev/null
         cat {wgs_manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} wgs_somalier/
         cat {array_manifest} | xargs -P {parallel_localise} -I {{}} gcloud storage cp -- {{}} array_somalier/
 

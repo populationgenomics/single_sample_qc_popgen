@@ -5,10 +5,11 @@ The WGS-to-array sequencing-group mapping for a cohort is fetched via
 ``query_wgs_to_array_mapping`` (each WGS SG has zero or more associated
 active array SGs via shared sample).
 
-The rolling popgen-genotyping pgen path is intentionally NOT looked up via
-metamist -- ``array_aggregate_pgen`` analyses are not currently registered
-in production -- so the pgen path is taken from config at the stage level
-and passed down. Revisit if registration starts happening.
+The rolling popgen-genotyping pgen path is looked up via
+``query_array_pgen_path`` -- the ``array_aggregate_pgen`` analysis is
+registered against the cohort in metamist and its ``outputs.path`` points
+at the ``.pgen``. The sibling ``.pvar``/``.psam`` live alongside it and are
+derived by ``derive_pgen_sibling_paths`` (a plain suffix swap).
 
 Classification (``classify_wgs_to_array_mapping``) is pure logic so it can
 be unit-tested without a metamist round-trip.
@@ -76,6 +77,67 @@ def query_wgs_to_array_mapping(cohort_id: str) -> list[dict[str, Any]]:
             }
         )
     return records
+
+
+# Rolling array_aggregate_pgen analysis registered against the cohort.
+QUERY_ARRAY_PGEN = gql(
+    """
+    query ArrayPgenPath($cohortId: String!) {
+      cohorts(id: {eq: $cohortId}) {
+        analyses {
+          id
+          type
+          timestampCompleted
+          outputs {
+            path
+          }
+        }
+      }
+    }
+    """
+)
+
+
+def query_array_pgen_path(cohort_id: str) -> str:
+    """Return the GCS path to the cohort's latest ``array_aggregate_pgen`` pgen.
+
+    The popgen-genotyping export is registered against the cohort as an
+    ``array_aggregate_pgen`` analysis whose ``outputs.path`` is the ``.pgen``.
+    If several are registered (re-exports), the most recently completed wins.
+    The sibling ``.pvar``/``.psam`` are derived via ``derive_pgen_sibling_paths``.
+    """
+    response = query(QUERY_ARRAY_PGEN, variables={'cohortId': cohort_id})
+    cohorts = response.get('cohorts') or []
+    if not cohorts:
+        raise RuntimeError(f'No cohort returned from metamist for id {cohort_id}')
+
+    pgen_analyses = [a for a in (cohorts[0].get('analyses') or []) if a.get('type') == 'array_aggregate_pgen']
+    if not pgen_analyses:
+        raise RuntimeError(
+            f'No array_aggregate_pgen analysis registered in metamist for cohort {cohort_id}'
+        )
+
+    # Most recently completed wins; fall back to analysis id when timestamps tie.
+    latest = max(pgen_analyses, key=lambda a: (a.get('timestampCompleted') or '', a.get('id') or 0))
+    outputs = latest.get('outputs') or {}
+    path = outputs.get('path')
+    if not path:
+        raise RuntimeError(
+            f'array_aggregate_pgen analysis {latest.get("id")} for cohort {cohort_id} has no output path'
+        )
+    return path
+
+
+def derive_pgen_sibling_paths(pgen_path: str) -> tuple[str, str, str]:
+    """Given the ``.pgen`` path, return ``(pgen, pvar, psam)``.
+
+    plink2 writes the trio side by side sharing a stem, so the ``.pvar`` and
+    ``.psam`` are a plain suffix swap off the ``.pgen``.
+    """
+    if not pgen_path.endswith('.pgen'):
+        raise ValueError(f'Expected a .pgen path, got: {pgen_path}')
+    stem = pgen_path[: -len('.pgen')]
+    return pgen_path, f'{stem}.pvar', f'{stem}.psam'
 
 
 def read_psam_array_sgs(psam_path: str | Path) -> set[str]:

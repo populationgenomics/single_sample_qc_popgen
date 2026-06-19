@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     parser = argparse.ArgumentParser(description='Classify cohort WGS↔array somalier-relate output')
     parser.add_argument('--cohort-id', required=True, help='Cohort ID (logging + Slack context)')
+    parser.add_argument('--project', required=True, help='Dataset + access level, e.g. ourdna-test (Slack context)')
     parser.add_argument('--mapping-path', required=True, help='GCS path to mapping JSON from PrepareSampleSwap')
     parser.add_argument('--pairs-tsv-path', required=True, help='GCS path to somalier pairs.tsv')
     parser.add_argument('--out', required=True, help='GCS path for swap_check.json')
@@ -84,11 +85,21 @@ def main() -> None:
                 v.get('n_sites_compared'),
             )
 
+    for sg_id, v in swap_check_by_sg.items():
+        if v['status'] == 'no_pair_row':
+            logger.warning(
+                '⚠️  %s (expected %s) is marked ready but produced NO somalier pair row. '
+                'The WGS .somalier sketch is likely missing, empty, corrupt, or named '
+                'differently from the SG id -- check the upstream sketch for this SG.',
+                sg_id,
+                v.get('expected_array_sg'),
+            )
+
     with to_path(args.out).open('w') as f:
         json.dump(swap_check_by_sg, f, indent=2)
 
     if args.send_to_slack:
-        message = build_swap_detected_slack_message(args.cohort_id, swap_check_by_sg)
+        message = build_swap_detected_slack_message(args.cohort_id, args.project, swap_check_by_sg)
         if message is not None:
             logger.warning(message)
             send_message(message)

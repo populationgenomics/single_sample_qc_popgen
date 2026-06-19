@@ -172,6 +172,7 @@ def classify_swap_check(
 
 def build_swap_detected_slack_message(
     cohort_id: str,
+    project: str,
     swap_check_by_sg: dict[str, dict[str, Any]],
 ) -> str | None:
     """Build the high-alert Slack message for any swap_detected SGs.
@@ -191,7 +192,7 @@ def build_swap_detected_slack_message(
         '=================================',
         '🚨 ALERT: Sample Swap Detected 🚨',
         '=================================',
-        f'*[{cohort_id}]* {len(swaps)} WGS sample(s) match a different array SG than expected:',
+        f'*[{project} | {cohort_id}]* {len(swaps)} WGS sample(s) match a different array SG than expected:',
     ]
     for sg_id, v in swaps:
         lines.append(

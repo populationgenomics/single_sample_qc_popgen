@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 from cpg_flow.workflow import get_workflow
 from cpg_utils import Path
-from cpg_utils.config import config_retrieve, get_driver_image, image_path, output_path
+from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, image_path, output_path
 from cpg_utils.hail_batch import get_batch
 
 from single_sample_qc_popgen.constants import DRAGEN_VERSION
@@ -25,6 +25,7 @@ from single_sample_qc_popgen.jobs import (
     somalier_extract,
     somalier_relate,
 )
+from single_sample_qc_popgen.metamist_utils import derive_pgen_sibling_paths, query_array_pgen_path
 from single_sample_qc_popgen.utils import initialise_python_job
 
 
@@ -122,10 +123,10 @@ class PrepareSampleSwap(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:  # noqa: ARG002
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-        # The rolling array_aggregate_pgen is not registered in metamist, so
-        # the user supplies the path explicitly. No default — config_retrieve
-        # raises if the analysis-runner config omits it.
-        psam_path = config_retrieve(['workflow', 'swap_check', 'psam_path'])
+        # The rolling array_aggregate_pgen is registered against the cohort in
+        # metamist; look up its .pgen and derive the psam (only the psam is
+        # needed here, to read the array SG IIDs present in the export).
+        _, _, psam_path = derive_pgen_sibling_paths(query_array_pgen_path(cohort.id))
 
         # Template for the upstream WGS sketches. {{sg_id}} survives the
         # f-string as the literal placeholder the script formats per SG.
@@ -174,9 +175,9 @@ class SwapCheckExportVcf(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
-        pgen_path = config_retrieve(['workflow', 'swap_check', 'pgen_path'])
-        pvar_path = config_retrieve(['workflow', 'swap_check', 'pvar_path'])
-        psam_path = config_retrieve(['workflow', 'swap_check', 'psam_path'])
+        # array_aggregate_pgen .pgen path comes from metamist (registered
+        # against the cohort); the .pvar/.psam sit alongside it.
+        pgen_path, pvar_path, psam_path = derive_pgen_sibling_paths(query_array_pgen_path(cohort.id))
 
         b = get_batch()
         j = b.new_bash_job(
@@ -328,6 +329,8 @@ class SwapCheckClassify(CohortStage):
         n_min = config_retrieve(['workflow', 'swap_check', 'n_sites_min'])
         send_to_slack = config_retrieve(['workflow', 'send_to_slack'], default=True)
 
+        project = cohort.dataset.name + ('-test' if get_access_level() == 'test' else '')
+
         b = get_batch()
         j = b.new_bash_job(
             name=f'SwapCheckClassify {cohort.id}',
@@ -339,6 +342,7 @@ class SwapCheckClassify(CohortStage):
             set -euo pipefail
             python3 -m single_sample_qc_popgen.jobs.classify_swaps_job \\
                 --cohort-id {cohort.id} \\
+                --project {project} \\
                 --mapping-path {mapping_path} \\
                 --pairs-tsv-path {pairs_tsv_path} \\
                 --out {output} \\

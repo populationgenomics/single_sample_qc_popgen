@@ -149,7 +149,7 @@ class PrepareSampleSwap(CohortStage):
         j.command(
             f"""
             set -euo pipefail
-            python3 -m single_sample_qc_popgen.jobs.prepare_sample_swap_job \\
+            python3 single_sample_qc_popgen/jobs/prepare_sample_swap_job.py \\
                 --cohort-id {cohort.id} \\
                 --psam-path {psam_path} \\
                 --wgs-sketch-template '{wgs_sketch_template}' \\
@@ -346,7 +346,7 @@ class SwapCheckClassify(CohortStage):
         j.command(
             f"""
             set -euo pipefail
-            python3 -m single_sample_qc_popgen.jobs.classify_swaps_job \\
+            python3 single_sample_qc_popgen/jobs/classify_swaps_job.py \\
                 --cohort-id {cohort.id} \\
                 --project {project} \\
                 --mapping-path {mapping_path} \\

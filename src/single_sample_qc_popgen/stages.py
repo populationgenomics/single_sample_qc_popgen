@@ -31,8 +31,7 @@ from single_sample_qc_popgen.utils import initialise_python_job
 
 def resolve_array_pgen_paths(cohort_id: str) -> tuple[str, str, str]:
     """(pgen, pvar, psam) from config if set (dev override), else from metamist."""
-    pgen = config_retrieve(['workflow', 'swap_check', 'pgen_path'], None)
-    if pgen:
+    if (pgen := config_retrieve(['workflow', 'swap_check', 'pgen_path'], None)):
         pvar = config_retrieve(['workflow', 'swap_check', 'pvar_path'])
         psam = config_retrieve(['workflow', 'swap_check', 'psam_path'])
         return pgen, pvar, psam

@@ -136,7 +136,7 @@ def derive_pgen_sibling_paths(pgen_path: str) -> tuple[str, str, str]:
     """
     if not pgen_path.endswith('.pgen'):
         raise ValueError(f'Expected a .pgen path, got: {pgen_path}')
-    stem = pgen_path[: -len('.pgen')]
+    stem = pgen_path.removesuffix('.pgen')
     return pgen_path, f'{stem}.pvar', f'{stem}.psam'
 
 

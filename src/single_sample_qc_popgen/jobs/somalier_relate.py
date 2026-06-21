@@ -55,7 +55,7 @@ def somalier_relate(
         name=f'SwapCheckSomalierRelate {cohort.id}',
         attributes=(cohort.get_job_attrs() or {}) | {'tool': 'somalier'},
     )
-    j.image(image_path('somalier'))
+    j.image(image_path('somalier', '0.3.1-2'))
     j.cpu(config_retrieve(['workflow', 'swap_check', 'somalier_cpu'], 4))
     j.memory(config_retrieve(['workflow', 'swap_check', 'somalier_memory'], 'standard'))
     j.storage(config_retrieve(['workflow', 'swap_check', 'somalier_storage'], '50G'))

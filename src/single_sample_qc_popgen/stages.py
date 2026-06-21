@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cpg_utils
 from cpg_flow.stage import (
@@ -30,11 +30,14 @@ from single_sample_qc_popgen.utils import initialise_python_job
 
 
 def resolve_array_pgen_paths(cohort_id: str) -> tuple[str, str, str]:
-    """(pgen, pvar, psam) from config if set (dev override), else from metamist."""
-    if (pgen := config_retrieve(['workflow', 'swap_check', 'pgen_path'], None)):
-        pvar = config_retrieve(['workflow', 'swap_check', 'pvar_path'])
-        psam = config_retrieve(['workflow', 'swap_check', 'psam_path'])
-        return pgen, pvar, psam
+    """(pgen, pvar, psam) from metamist; config override permitted only in test."""
+    if dev_override := config_retrieve(['workflow', 'swap_check', 'dev_override'], None):
+        if get_access_level() != 'test':
+            raise RuntimeError(
+                'swap_check.dev_override may only be set under test access; '
+                'production resolves the pgen from the array_aggregate_pgen analysis in metamist'
+            )
+        return dev_override['pgen_path'], dev_override['pvar_path'], dev_override['psam_path']
     return derive_pgen_sibling_paths(query_array_pgen_path(cohort_id))
 
 

@@ -3,13 +3,17 @@ name = 'single_sample_qc_popgen'
 input_cohorts = ['COH0000']
 sequencing_type = 'genome'
 last_stages = ['RegisterQcMetricsToMetamist']
+# Pipeline-wide Slack flag. Governs every QC notification this pipeline
+# emits: the MultiQC failures report (check_multiqc.post_to_slack) and
+# the swap-detected alert (classify_swaps.run). Channel + token live in
+# the [slack] block below.
+send_to_slack = true
 
 [cramqc]
 assume_sorted = true
 num_pcs = 4
 
 [workflow.multiqc]
-send_to_slack = true
 # If true, will deactivate any sequencing groups that fail any of the qc_thresholds.
 deactivate_sgs = false
 
@@ -29,6 +33,33 @@ ploidy_estimation = true
 # downstream in ourdna_genomic_atlas, alongside the ancestry-aware f-stat
 # renormalisation that shares the same raw signals. This repo emits raw
 # somalier signals (f_stat_raw, x_het_rate, y_calls, …) only.
+
+[workflow.swap_check]
+# Thresholds for swap classification — calibrated against COH8495 (expected
+# self-matches sat at relatedness ~0.999 with n ~5800). Generous margins
+# given the >0.6 gap between true match and next-best.
+relatedness_concordant_min = 0.8
+relatedness_swap_max = 0.3
+n_sites_min = 500
+
+# Parallel workers for `gcloud storage cp` of WGS sketches inside the
+# somalier container (matches the manifest pattern used by run_multiqc).
+somalier_localise_parallelism = 16
+
+# The rolling popgen-genotyping pgen/pvar/psam paths are looked up at queue
+# time from the cohort's array_aggregate_pgen analysis in metamist
+# (outputs.path is the .pgen; .pvar/.psam sit alongside it). The stage errors
+# at queue time if no such analysis is registered.
+#
+# For development against data not yet registered in metamist, set pgen_path
+# (+ pvar_path/psam_path) here to override the lookup:
+#     pgen_path = 'gs://.../<DATE>_cohort.pgen'
+#     pvar_path = 'gs://.../<DATE>_cohort.pvar'
+#     psam_path = 'gs://.../<DATE>_cohort.psam'
+#
+# Container images come from image_path('plink') / image_path('somalier')
+# and references (somalier sites VCF, hg38 fasta) come from reference_path()
+# — neither is configured here.
 
 [ica.pipelines]
 dragen_version = 'dragen_3_7_8'

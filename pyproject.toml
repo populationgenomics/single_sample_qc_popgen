@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 name='single_sample_qc_popgen'
 description='Run sample quality control on DRAGEN data using cpg-flow'
 readme = "README.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11,<3.12"
 version="0.1.5"
 license={ "file" = "LICENSE" }
 classifiers=[

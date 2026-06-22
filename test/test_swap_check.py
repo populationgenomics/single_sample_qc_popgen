@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from single_sample_qc_popgen import stages
 from single_sample_qc_popgen.jobs.classify_swaps import (
     build_swap_detected_slack_message,
     classify_swap_check,
@@ -45,14 +46,14 @@ def test_derive_pgen_sibling_paths_rejects_non_pgen():
 
 def test_read_psam_array_sgs_extracts_iids(tmp_path):
     psam = tmp_path / 'cohort.psam'
-    psam.write_text('#FID\tIID\tSEX\n0\tCPG1\t1\n0\tCPG2\t2\n')
-    assert read_psam_array_sgs(psam) == {'CPG1', 'CPG2'}
+    psam.write_text('#FID\tIID\tSEX\n0\tSYN1\t1\n0\tSYN2\t2\n')
+    assert read_psam_array_sgs(psam) == {'SYN1', 'SYN2'}
 
 
 def test_read_psam_array_sgs_skips_blank_and_comment_lines(tmp_path):
     psam = tmp_path / 'cohort.psam'
-    psam.write_text('#IID\tSEX\nCPG1\t1\n\nCPG2\t2\n')
-    assert read_psam_array_sgs(psam) == {'CPG1', 'CPG2'}
+    psam.write_text('#IID\tSEX\nSYN1\t1\n\nSYN2\t2\n')
+    assert read_psam_array_sgs(psam) == {'SYN1', 'SYN2'}
 
 
 def test_read_psam_array_sgs_empty_raises(tmp_path):
@@ -217,11 +218,48 @@ def test_slack_message_includes_project_cohort_and_swap_details():
         },
         'WGS_OK': {'status': 'concordant'},
     }
-    msg = build_swap_detected_slack_message('COH13529', 'ourdna-test', swap_check)
+    msg = build_swap_detected_slack_message('COH1', 'ourdna-test', swap_check)
     assert msg is not None
     assert 'ourdna-test' in msg
-    assert 'COH13529' in msg
+    assert 'COH1' in msg
     assert 'WGS_SWAP' in msg
     assert 'ARR_EXP' in msg
     assert 'ARR_BEST' in msg
     assert 'WGS_OK' not in msg  # concordant SGs are not listed
+
+
+# --- resolve_array_pgen_paths (dev override gating) ------------------------
+
+DEV_OVERRIDE = {
+    'pgen_path': 'gs://bucket/dir/test_subset.pgen',
+    'pvar_path': 'gs://bucket/dir/test_subset.pvar',
+    'psam_path': 'gs://bucket/dir/test_subset_swapped.psam',
+}
+
+
+def test_resolve_array_pgen_paths_override_allowed_in_test(monkeypatch):
+    monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, _default=None: DEV_OVERRIDE)
+    monkeypatch.setattr(stages, 'get_access_level', lambda: 'test')
+    assert stages.resolve_array_pgen_paths('COH1') == (
+        DEV_OVERRIDE['pgen_path'],
+        DEV_OVERRIDE['pvar_path'],
+        DEV_OVERRIDE['psam_path'],
+    )
+
+
+def test_resolve_array_pgen_paths_override_blocked_in_main(monkeypatch):
+    monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, _default=None: DEV_OVERRIDE)
+    monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
+    with pytest.raises(RuntimeError, match='only be set under test access'):
+        stages.resolve_array_pgen_paths('COH1')
+
+
+def test_resolve_array_pgen_paths_falls_back_to_metamist(monkeypatch):
+    monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, default=None: default)
+    monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
+    monkeypatch.setattr(stages, 'query_array_pgen_path', lambda _cohort_id: 'gs://bucket/dir/cohort.pgen')
+    assert stages.resolve_array_pgen_paths('COH1') == (
+        'gs://bucket/dir/cohort.pgen',
+        'gs://bucket/dir/cohort.pvar',
+        'gs://bucket/dir/cohort.psam',
+    )

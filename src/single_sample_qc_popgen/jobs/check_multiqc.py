@@ -10,7 +10,7 @@ a channel with:
 """
 import json
 from collections import defaultdict
-from typing import Any
+from typing import Any, LiteralString
 
 import cpg_utils
 from cpg_flow.targets import Cohort
@@ -343,7 +343,7 @@ def write_sex_imputation_to_json(
     with to_path(output).open('w') as f:
         json.dump(sex_imputation_by_sg, f, indent=4)
 
-def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
+def generate_slack_message(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> LiteralString:
     """Constructs and sends the final Slack message."""
 
     num_failed = len(bad_lines_by_sample)
@@ -374,7 +374,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
     else:
         messages.append(f'✅ {title}')
 
-    text = '\n'.join(messages)
+    text: LiteralString = '\n'.join(messages)
     logger.info(text)
 
     return text
@@ -471,7 +471,7 @@ def run(
     write_sex_imputation_to_json(qc_checker.sex_imputation_by_sg, sex_imputation_output)
 
     if config_retrieve(key=['workflow', 'send_to_slack'], default=True):
-        text = post_to_slack(bad_lines_by_sample, qc_checker, html_url)
+        text: LiteralString = generate_slack_message(bad_lines_by_sample, qc_checker, html_url)
         send_message(text)
     else:
         logger.info('Skipping Slack notification as per config.')

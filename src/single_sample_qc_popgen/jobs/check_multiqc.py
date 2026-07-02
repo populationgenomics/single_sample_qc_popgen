@@ -377,11 +377,7 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
     text = '\n'.join(messages)
     logger.info(text)
 
-    # 3. Send to Slack if enabled
-    if config_retrieve(['workflow', 'send_to_slack'], default=True):
-        send_message(text)
-    else:
-        logger.info('Skipping Slack notification as per config.')
+    return text
 
 
 def run(
@@ -473,5 +469,9 @@ def run(
     # failures dict keeps the CheckMultiQc stage outputs satisfied.
     write_qc_failures_to_json(bad_lines_by_sample, failures_output)
     write_sex_imputation_to_json(qc_checker.sex_imputation_by_sg, sex_imputation_output)
-    if bad_lines_by_sample:
-        post_to_slack(bad_lines_by_sample, qc_checker, html_url)
+
+    if config_retrieve(key=['workflow', 'send_to_slack'], default=True):
+        text = post_to_slack(bad_lines_by_sample, qc_checker, html_url)
+        send_message(text)
+    else:
+        logger.info('Skipping Slack notification as per config.')

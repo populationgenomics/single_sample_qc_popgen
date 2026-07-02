@@ -343,7 +343,11 @@ def write_sex_imputation_to_json(
     with to_path(output).open('w') as f:
         json.dump(sex_imputation_by_sg, f, indent=4)
 
-def generate_slack_message(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> LiteralString:
+def generate_slack_message(
+    bad_lines_by_sample: dict[str, list[str]],
+    qc_checker: QCChecker,
+    html_url: str
+    ) -> LiteralString:
     """Constructs and sends the final Slack message."""
 
     num_failed = len(bad_lines_by_sample)

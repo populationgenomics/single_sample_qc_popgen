@@ -10,7 +10,7 @@ a channel with:
 """
 import json
 from collections import defaultdict
-from typing import Any
+from typing import Any, LiteralString
 
 import cpg_utils
 from cpg_flow.targets import Cohort
@@ -347,8 +347,12 @@ def write_sex_imputation_to_json(
     with to_path(output).open('w') as f:
         json.dump(sex_imputation_by_sg, f, indent=4)
 
-def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
-    """Constructs and sends the final Slack message.
+def generate_slack_message(
+    bad_lines_by_sample: dict[str, list[str]],
+    qc_checker: QCChecker,
+    html_url: str,
+) -> LiteralString:
+    """Constructs the final Slack message.
 
     Control samples (e.g. NA12878) are reported in a separate, informational
     block and excluded from the flagged count and high-failure-rate alert:
@@ -396,14 +400,10 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
         for sg_id, bad_lines in control_failures.items():
             messages.append(f'ℹ️ {sg_id}: ' + ', '.join(bad_lines))
 
-    text = '\n'.join(messages)
+    text: LiteralString = '\n'.join(messages)
     logger.info(text)
 
-    # 3. Send to Slack if enabled
-    if config_retrieve(['workflow', 'send_to_slack'], default=True):
-        send_message(text)
-    else:
-        logger.info('Skipping Slack notification as per config.')
+    return text
 
 
 def run(
@@ -495,5 +495,9 @@ def run(
     # failures dict keeps the CheckMultiQc stage outputs satisfied.
     write_qc_failures_to_json(bad_lines_by_sample, failures_output)
     write_sex_imputation_to_json(qc_checker.sex_imputation_by_sg, sex_imputation_output)
-    if bad_lines_by_sample:
-        post_to_slack(bad_lines_by_sample, qc_checker, html_url)
+
+    if config_retrieve(key=['workflow', 'send_to_slack'], default=True):
+        text: LiteralString = generate_slack_message(bad_lines_by_sample, qc_checker, html_url)
+        send_message(text)
+    else:
+        logger.info('Skipping Slack notification as per config.')

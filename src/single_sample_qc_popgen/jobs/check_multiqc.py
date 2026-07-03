@@ -398,7 +398,7 @@ def generate_slack_message(
     if control_failures:
         messages.append('\n— Controls —')
         for sg_id, bad_lines in control_failures.items():
-            messages.append(f'ℹ️ {sg_id}: ' + ', '.join(bad_lines))
+            messages.append(f'ℹ️ {sg_id}: ' + ', '.join(bad_lines))  # noqa: RUF001
 
     text: LiteralString = '\n'.join(messages)
     logger.info(text)

@@ -20,7 +20,7 @@ from cpg_utils.slack import send_message
 from loguru import logger
 from metamist.graphql import gql, query
 
-from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD
+from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
 from single_sample_qc_popgen.utils import load_json
 
@@ -31,6 +31,7 @@ REPORTED_SEX_QUERY = gql(
             sequencingGroups {
             id
             sample {
+                externalId
                 participant {
                     reportedSex
                     meta
@@ -68,8 +69,7 @@ MUTATION_SEQUENCING_GROUP = gql(
     """
 )
 
-
-def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
+def get_sgid_reported_sex_mapping_and_control_ids(cohort: Cohort) -> tuple[dict[str, int], set[str]]:
     """
     Get a mapping of sequencing group ID to reported sex.
     Preferentially uses 'participant_portal_reported_sex' from the
@@ -77,10 +77,14 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
     """
     mapping: dict[str, int] = {}
     response = query(REPORTED_SEX_QUERY, variables={'cohortId': cohort.id})
+    control_sg_ids: set[str] = set()
     for coh in response['cohorts']:
         for sg in coh['sequencingGroups']:
             sg_id = sg['id']
             participant = sg['sample']['participant']
+            is_control: bool = OURDNA_CONTROL in sg['sample']['externalId']
+            if is_control:
+                control_sg_ids.add(sg_id)
 
             preferred_field = None
             participant_meta = participant.get('meta')
@@ -109,7 +113,7 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
                         f"and 'reportedSex' are missing or null. This SG will be "
                         f"missing from the sex map."
                     )
-    return mapping
+    return mapping, control_sg_ids
 
 
 class QCChecker:
@@ -120,7 +124,7 @@ class QCChecker:
     def __init__(self, cohort: Cohort, multiqc_data: dict):
         self.cohort = cohort
         self.cohort_sgs = self.cohort.get_sequencing_groups()
-        self.sex_mapping = get_sgid_reported_sex_mapping(self.cohort)
+        self.sex_mapping, self.control_sg_ids = get_sgid_reported_sex_mapping_and_control_ids(self.cohort)
         self.multiqc_data = multiqc_data
         # Per-SG raw somalier signals (f_stat_raw, x_het_rate, counters).
         # Karyotype derivation lives downstream in ourdna_genomic_atlas; this
@@ -344,12 +348,24 @@ def write_sex_imputation_to_json(
         json.dump(sex_imputation_by_sg, f, indent=4)
 
 def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCChecker, html_url: str) -> None:
-    """Constructs and sends the final Slack message."""
+    """Constructs and sends the final Slack message.
 
-    num_failed = len(bad_lines_by_sample)
-    num_total_sgs = len(qc_checker.cohort_sgs)
+    Control samples (e.g. NA12878) are reported in a separate, informational
+    block and excluded from the flagged count and high-failure-rate alert:
+    they are not topped up to yield, so their coverage failures are expected
+    and should not read as real QC failures.
+    """
+    control_sg_ids = qc_checker.control_sg_ids
 
-    # 1. Check for high failure rate
+    # Partition failures: real failures drive the alert; control failures are informational only.
+    real_failures = {sg: lines for sg, lines in bad_lines_by_sample.items() if sg not in control_sg_ids}
+    control_failures = {sg: lines for sg, lines in bad_lines_by_sample.items() if sg in control_sg_ids}
+
+    num_failed = len(real_failures)
+    # Denominator excludes controls too, so the rate reflects real samples only.
+    num_total_sgs = len(qc_checker.cohort_sgs) - len(control_sg_ids)
+
+    # 1. Check for high failure rate (controls excluded from both sides)
     high_failure_message = None
     if num_total_sgs > 0 and (num_failed / num_total_sgs) > FAILURE_RATE_THRESHOLD:
         failure_percent = (num_failed / num_total_sgs) * 100
@@ -369,10 +385,16 @@ def post_to_slack(bad_lines_by_sample: dict[str, list[str]], qc_checker: QCCheck
 
     if num_failed > 0:
         messages.append(f'{title}. {num_failed} samples are flagged:')
-        for sg_id, bad_lines in bad_lines_by_sample.items():
+        for sg_id, bad_lines in real_failures.items():
             messages.append(f'❗ {sg_id}: ' + ', '.join(bad_lines))
     else:
         messages.append(f'✅ {title}')
+
+    # 3. Informational control block
+    if control_failures:
+        messages.append('\n— Controls —')
+        for sg_id, bad_lines in control_failures.items():
+            messages.append(f'ℹ️ {sg_id}: ' + ', '.join(bad_lines))
 
     text = '\n'.join(messages)
     logger.info(text)

@@ -4,7 +4,7 @@ input_cohorts = ['COH0000']
 sequencing_type = 'genome'
 last_stages = ['RegisterQcMetricsToMetamist']
 # Pipeline-wide Slack flag. Governs every QC notification this pipeline
-# emits: the MultiQC failures report (check_multiqc.post_to_slack) and
+# emits: the MultiQC failures report (check_multiqc.generate_slack_message) and
 # the swap-detected alert (classify_swaps.run). Channel + token live in
 # the [slack] block below.
 send_to_slack = true

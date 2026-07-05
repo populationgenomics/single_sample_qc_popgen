@@ -12,6 +12,7 @@ from cpg_utils.config import config_retrieve, get_access_level
 from loguru import logger
 from metamist.graphql import gql, query
 
+from single_sample_qc_popgen.constants import OURDNA_CONTROL
 from single_sample_qc_popgen.utils import load_json
 
 REPORTED_SEX_QUERY = gql(
@@ -56,6 +57,36 @@ MUTATION_SEQUENCING_GROUP = gql(
     }
     """
 )
+
+
+CONTROL_SG_QUERY = gql(
+    """
+    query ControlQuery($cohortId: String!) {
+        cohorts(id: {eq: $cohortId}) {
+            sequencingGroups {
+                id
+                sample {
+                    externalId
+                }
+            }
+        }
+    }
+    """
+)
+
+
+def get_control_sg_ids(cohort: Cohort) -> set[str]:
+    """Return SG IDs whose sample is an OurDNA control (external ID contains
+    OURDNA_CONTROL). Controls are never topped up and must never be deactivated.
+    """
+    response = query(CONTROL_SG_QUERY, variables={'cohortId': cohort.id})
+    control_sg_ids: set[str] = set()
+    for coh in response['cohorts']:
+        for sg in coh['sequencingGroups']:
+            external_id = sg['sample'].get('externalId') or ''
+            if OURDNA_CONTROL in external_id:
+                control_sg_ids.add(sg['id'])
+    return control_sg_ids
 
 
 def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
@@ -187,12 +218,18 @@ def update_sg_qc_metrics(
     with output.open('w') as f:
         json.dump(meta_to_update, f, indent=4)
 
-    # Deactivate sequencing groups that failed QC
+    # Deactivate sequencing groups that failed QC. Controls are excluded:
+    # deactivating a control would archive the cohort it belongs to.
     if config_retrieve(['workflow', 'multiqc']).get('deactivate_sgs', False):
-        logger.warning(f'Deactivating failed samples: {list(failed_samples.keys())}')
+        control_sg_ids = get_control_sg_ids(cohort)
+        sgs_to_deactivate = [sg for sg in failed_samples if sg not in control_sg_ids]
+        skipped_controls = [sg for sg in failed_samples if sg in control_sg_ids]
+        if skipped_controls:
+            logger.warning(f'Skipping deactivation of failed control samples: {skipped_controls}')
+        logger.warning(f'Deactivating failed samples: {sgs_to_deactivate}')
         result_mutation = query(
             MUTATION_DEACTIVATE_SGS,
-            variables={'sequencingGroupsToDeactivate': list(failed_samples.keys())},
+            variables={'sequencingGroupsToDeactivate': sgs_to_deactivate},
         )['sequencingGroup']['archiveSequencingGroups']
         logger.warning(f'Deactivated sequencing groups: {result_mutation}')
 

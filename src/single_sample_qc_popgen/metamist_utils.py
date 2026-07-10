@@ -88,9 +88,7 @@ QUERY_ARRAY_PGEN = gql(
           id
           type
           timestampCompleted
-          outputs {
-            path
-          }
+          outputs
         }
       }
     }

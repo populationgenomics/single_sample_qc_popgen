@@ -29,8 +29,13 @@ from single_sample_qc_popgen.metamist_utils import derive_pgen_sibling_paths, qu
 from single_sample_qc_popgen.utils import initialise_python_job
 
 
-def resolve_array_pgen_paths(cohort_id: str) -> tuple[str, str, str]:
-    """(pgen, pvar, psam) from metamist; config override permitted only in test."""
+def resolve_array_pgen_paths() -> tuple[str, str, str]:
+    """(pgen, pvar, psam) from metamist; config override permitted only in test.
+
+    The rolling array_aggregate_pgen analysis is registered against the array
+    super-cohort, not the WGS cohort being QC'd, so the cohort to query is
+    taken from config rather than from the workflow target.
+    """
     if dev_override := config_retrieve(['workflow', 'swap_check', 'dev_override'], None):
         if get_access_level() != 'test':
             raise RuntimeError(
@@ -38,7 +43,14 @@ def resolve_array_pgen_paths(cohort_id: str) -> tuple[str, str, str]:
                 'production resolves the pgen from the array_aggregate_pgen analysis in metamist'
             )
         return dev_override['pgen_path'], dev_override['pvar_path'], dev_override['psam_path']
-    return derive_pgen_sibling_paths(query_array_pgen_path(cohort_id))
+
+    rolling_aggregate_cohort_id = config_retrieve(['workflow', 'swap_check', 'rolling_aggregate_cohort_id'], None)
+    if not rolling_aggregate_cohort_id:
+        raise RuntimeError(
+            'workflow.swap_check.rolling_aggregate_cohort_id is not set; set it to the cohort '
+            'the array_aggregate_pgen analysis is registered against (the array super-cohort)'
+        )
+    return derive_pgen_sibling_paths(query_array_pgen_path(rolling_aggregate_cohort_id))
 
 
 def get_output_prefix(cohort: Cohort, stage_name: str, category: str | None = None) -> Path:
@@ -136,7 +148,7 @@ class PrepareSampleSwap(CohortStage):
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
         # Only the psam is needed here, to read the array SG IIDs in the export.
-        _, _, psam_path = resolve_array_pgen_paths(cohort.id)
+        _, _, psam_path = resolve_array_pgen_paths()
 
         # Template for the upstream WGS sketches. {{sg_id}} survives the
         # f-string as the literal placeholder the script formats per SG.
@@ -185,7 +197,7 @@ class SwapCheckExportVcf(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None:
         output: cpg_utils.Path = self.expected_outputs(cohort=cohort)
 
-        pgen_path, pvar_path, psam_path = resolve_array_pgen_paths(cohort.id)
+        pgen_path, pvar_path, psam_path = resolve_array_pgen_paths()
 
         b = get_batch()
         j = b.new_bash_job(

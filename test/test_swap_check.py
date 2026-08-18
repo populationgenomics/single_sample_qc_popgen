@@ -240,7 +240,7 @@ DEV_OVERRIDE = {
 def test_resolve_array_pgen_paths_override_allowed_in_test(monkeypatch):
     monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, _default=None: DEV_OVERRIDE)
     monkeypatch.setattr(stages, 'get_access_level', lambda: 'test')
-    assert stages.resolve_array_pgen_paths('COH1') == (
+    assert stages.resolve_array_pgen_paths() == (
         DEV_OVERRIDE['pgen_path'],
         DEV_OVERRIDE['pvar_path'],
         DEV_OVERRIDE['psam_path'],
@@ -251,15 +251,34 @@ def test_resolve_array_pgen_paths_override_blocked_in_main(monkeypatch):
     monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, _default=None: DEV_OVERRIDE)
     monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
     with pytest.raises(RuntimeError, match='only be set under test access'):
-        stages.resolve_array_pgen_paths('COH1')
+        stages.resolve_array_pgen_paths()
 
 
 def test_resolve_array_pgen_paths_falls_back_to_metamist(monkeypatch):
-    monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, default=None: default)
+    def fake_config(keys, default=None) -> str | None:
+        if keys == ['workflow', 'swap_check', 'rolling_aggregate_cohort_id']:
+            return 'COH_ARRAY'
+        return default
+
+    queried: list[str] = []
+
+    def fake_query(cohort_id) -> str:
+        queried.append(cohort_id)
+        return 'gs://bucket/dir/cohort.pgen'
+
+    monkeypatch.setattr(stages, 'config_retrieve', fake_config)
     monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
-    monkeypatch.setattr(stages, 'query_array_pgen_path', lambda _cohort_id: 'gs://bucket/dir/cohort.pgen')
-    assert stages.resolve_array_pgen_paths('COH1') == (
+    monkeypatch.setattr(stages, 'query_array_pgen_path', fake_query)
+    assert stages.resolve_array_pgen_paths() == (
         'gs://bucket/dir/cohort.pgen',
         'gs://bucket/dir/cohort.pvar',
         'gs://bucket/dir/cohort.psam',
     )
+    assert queried == ['COH_ARRAY']
+
+
+def test_resolve_array_pgen_paths_requires_rolling_aggregate_cohort_id(monkeypatch):
+    monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, default=None: default)
+    monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
+    with pytest.raises(RuntimeError, match='rolling_aggregate_cohort_id'):
+        stages.resolve_array_pgen_paths()

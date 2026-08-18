@@ -44,13 +44,13 @@ def resolve_array_pgen_paths() -> tuple[str, str, str]:
             )
         return dev_override['pgen_path'], dev_override['pvar_path'], dev_override['psam_path']
 
-    array_cohort_id = config_retrieve(['workflow', 'swap_check', 'array_cohort_id'], None)
-    if not array_cohort_id:
+    rolling_aggregate_cohort_id = config_retrieve(['workflow', 'swap_check', 'rolling_aggregate_cohort_id'], None)
+    if not rolling_aggregate_cohort_id:
         raise RuntimeError(
-            'workflow.swap_check.array_cohort_id is not set; set it to the cohort '
+            'workflow.swap_check.rolling_aggregate_cohort_id is not set; set it to the cohort '
             'the array_aggregate_pgen analysis is registered against (the array super-cohort)'
         )
-    return derive_pgen_sibling_paths(query_array_pgen_path(array_cohort_id))
+    return derive_pgen_sibling_paths(query_array_pgen_path(rolling_aggregate_cohort_id))
 
 
 def get_output_prefix(cohort: Cohort, stage_name: str, category: str | None = None) -> Path:

@@ -40,7 +40,7 @@ ploidy_estimation = true
 # cohort being QC'd. Required whenever the swap-check stages run; the stage
 # errors at queue time if unset or if no array_aggregate_pgen analysis is
 # registered against it.
-array_cohort_id = 'COH0000'
+rolling_aggregate_cohort_id = 'COH0000'
 
 # Thresholds for swap classification — calibrated against COH8495 (expected
 # self-matches sat at relatedness ~0.999 with n ~5800). Generous margins
@@ -54,7 +54,7 @@ n_sites_min = 500
 somalier_localise_parallelism = 16
 
 # The rolling popgen-genotyping pgen/pvar/psam paths are looked up at queue
-# time from the array_cohort_id cohort's array_aggregate_pgen analysis in metamist
+# time from the rolling_aggregate_cohort_id cohort's array_aggregate_pgen analysis in metamist
 # (outputs.path is the .pgen; .pvar/.psam sit alongside it). The stage errors
 # at queue time if no such analysis is registered.
 #

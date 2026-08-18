@@ -256,7 +256,7 @@ def test_resolve_array_pgen_paths_override_blocked_in_main(monkeypatch):
 
 def test_resolve_array_pgen_paths_falls_back_to_metamist(monkeypatch):
     def fake_config(keys, default=None) -> str | None:
-        if keys == ['workflow', 'swap_check', 'array_cohort_id']:
+        if keys == ['workflow', 'swap_check', 'rolling_aggregate_cohort_id']:
             return 'COH_ARRAY'
         return default
 
@@ -277,8 +277,8 @@ def test_resolve_array_pgen_paths_falls_back_to_metamist(monkeypatch):
     assert queried == ['COH_ARRAY']
 
 
-def test_resolve_array_pgen_paths_requires_array_cohort_id(monkeypatch):
+def test_resolve_array_pgen_paths_requires_rolling_aggregate_cohort_id(monkeypatch):
     monkeypatch.setattr(stages, 'config_retrieve', lambda _keys, default=None: default)
     monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
-    with pytest.raises(RuntimeError, match='array_cohort_id'):
+    with pytest.raises(RuntimeError, match='rolling_aggregate_cohort_id'):
         stages.resolve_array_pgen_paths()

@@ -8,7 +8,7 @@ active array SGs via shared sample).
 The rolling popgen-genotyping pgen path is looked up via
 ``query_array_pgen_path`` -- the ``array_aggregate_pgen`` analysis is
 registered against the array super-cohort (config
-``workflow.swap_check.array_cohort_id``), and its ``outputs.path`` points
+``workflow.swap_check.rolling_aggregate_cohort_id``), and its ``outputs.path`` points
 at the ``.pgen``. The sibling ``.pvar``/``.psam`` live alongside it and are
 derived by ``derive_pgen_sibling_paths`` (a plain suffix swap).
 

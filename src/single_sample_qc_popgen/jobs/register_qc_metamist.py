@@ -132,14 +132,22 @@ METRIC_MAP = [
 
 
 def resolve_metric_sections(general_stats: dict[str, Any], metric_keys: list[str]) -> dict[str, str]:
-    """Map each metric name to the single general-stats section containing it.
+    """Maps each metric name to the single general-stats section containing it.
 
     MultiQC keys report_general_stats_data by module anchor plus an
-    auto-incrementing suffix (DRAGEN, DRAGEN_3, ...) whose numbering depends on
-    the input file mix, so sections are resolved by content instead of by
-    positional key. Raises if a metric appears in zero or in more than one
-    section — either means the MultiQC inputs or version changed and the
-    registered metrics could no longer be trusted.
+    auto-incrementing suffix (DRAGEN, DRAGEN_3, ...) whose numbering depends
+    on the input file mix, so sections are resolved by content instead of by
+    positional key.
+
+    Args:
+        general_stats: The report_general_stats_data mapping from multiqc_data.json.
+        metric_keys: Metric names to resolve.
+
+    Returns:
+        Mapping of metric name to section key.
+
+    Raises:
+        ValueError: If any metric appears in zero or in more than one section.
     """
     errors: list[str] = []
     section_by_metric: dict[str, str] = {}

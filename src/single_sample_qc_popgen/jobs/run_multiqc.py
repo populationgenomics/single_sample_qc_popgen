@@ -18,13 +18,17 @@ from single_sample_qc_popgen.utils import get_dragen_output_path, get_qc_path
 
 
 def dragen_qc_paths(sg_names: Sequence[str]) -> list[Path]:
-    """Explicit per-SG paths to the DRAGEN CSVs that MultiQC parses.
+    """Builds the explicit per-SG paths to the DRAGEN CSVs that MultiQC parses.
 
-    Paths are constructed, not discovered: dragen_metrics/<SG>/ mixes two
-    layout vintages (see docs/dragen-output-schema.md), and a recursive glob
-    sweeps in nested duplicates whose basenames collide when staged into the
-    flat MultiQC input directory. A path listed here that does not exist in
-    GCS fails the copy step loudly, naming the missing object.
+    Args:
+        sg_names: Sequencing group names in the cohort.
+
+    Returns:
+        One path per sequencing group per suffix in MULTIQC_INPUT_SUFFIXES.
+
+    Raises:
+        ValueError: If sg_names is empty, or if two paths share a basename
+            (duplicates would clobber each other in the flat staging directory).
     """
     if not sg_names:
         raise ValueError('No sequencing groups to aggregate with MultiQC')
@@ -35,9 +39,6 @@ def dragen_qc_paths(sg_names: Sequence[str]) -> list[Path]:
         for suffix in MULTIQC_INPUT_SUFFIXES
     ]
 
-    # The staging copy is flat, so duplicate basenames would silently clobber
-    # each other. Impossible while SG names are unique, but assert it so the
-    # guarantee is structural rather than conventional.
     duplicates = [name for name, count in Counter(p.name for p in paths).items() if count > 1]
     if duplicates:
         raise ValueError(f'Duplicate basenames would clobber each other in the MultiQC staging dir: {duplicates}')
@@ -49,9 +50,7 @@ def run_multiqc(
     cohort: Cohort,
     outputs: dict[str, Path],
 ) -> BashJob:
-    """
-    Creates and calls the Job to run MultiQC on the explicit per-SG DRAGEN QC files.
-    """
+    """Creates the batch job that runs MultiQC on the per-SG DRAGEN QC files."""
     qc_file_paths = dragen_qc_paths([sg.name for sg in cohort.get_sequencing_groups()])
     logger.info(f'Staging {len(qc_file_paths)} QC files for MultiQC aggregation.')
 

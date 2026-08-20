@@ -100,67 +100,93 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
             mapping[sg['id']] = sg['sample']['participant']['reportedSex']
     return mapping
 
+# Metrics registered to metamist, as (meta_key, general-stats metric name).
+METRIC_MAP = [
+    # Contamination
+    ('contamination_dragen', 'Estimated sample contamination'),
+
+    # Coverage & Yield
+    ('mean_coverage', 'Average sequenced coverage over genome'),
+    ('median_coverage', 'wgs median autosomal coverage over genome'),
+    ('pct_genome_gt_20x', 'wgs pct of genome with coverage [20x:inf)'),
+    ('q30_bases_pct', 'Q30 bases pct'),
+
+    # Alignment & Library Quality
+    ('mapping_rate_pct', 'Mapped reads pct'),
+    ('pct_duplicate_reads', 'Number of duplicate marked reads pct'),
+    ('mean_insert_size', 'Insert length: mean'),
+    ('std_dev_insert_size', 'Insert length: standard deviation'),
+    ('avg_gc_content', 'avg_gc_content_percent'),
+    ('chimera_alignments', 'Supplementary (chimeric) alignments'),
+    ('total_alignments', 'Total alignments'),
+
+    # Sex & Ploidy
+    ('ploidy_estimation', 'Ploidy estimation'),
+    ('norm_x_coverage', 'X median / Autosomal median'),
+    ('norm_y_coverage', 'Y median / Autosomal median'),
+
+    # Variant QC
+    ('ti_tv_ratio', 'Ti/Tv ratio'),
+    ('het_hom_ratio', 'Het/Hom ratio'),
+]
+
+
+def resolve_metric_sections(general_stats: dict[str, Any], metric_keys: list[str]) -> dict[str, str]:
+    """Map each metric name to the single general-stats section containing it.
+
+    MultiQC keys report_general_stats_data by module anchor plus an
+    auto-incrementing suffix (DRAGEN, DRAGEN_3, ...) whose numbering depends on
+    the input file mix, so sections are resolved by content instead of by
+    positional key. Raises if a metric appears in zero or in more than one
+    section — either means the MultiQC inputs or version changed and the
+    registered metrics could no longer be trusted.
+    """
+    errors: list[str] = []
+    section_by_metric: dict[str, str] = {}
+    for metric_key in metric_keys:
+        hits = [
+            section_key
+            for section_key, val_by_metric_by_sample in general_stats.items()
+            if any(metric_key in val_by_metric for val_by_metric in val_by_metric_by_sample.values())
+        ]
+        if len(hits) == 1:
+            section_by_metric[metric_key] = hits[0]
+        else:
+            errors.append(f'{metric_key!r} found in {len(hits)} sections {hits}')
+    if errors:
+        raise ValueError(
+            'Could not resolve MultiQC general-stats sections '
+            f'(available sections: {list(general_stats)}): ' + '; '.join(errors)
+        )
+    return section_by_metric
+
+
 def build_sg_multiqc_meta_dict(cohort_sgs: list[SequencingGroup], multiqc_json: dict[str, Any]) -> dict[str, dict]:
     """
     Build a dictionary mapping sequencing group IDs to their MultiQC metrics.
     """
-    metric_map = [
-        # Contamination
-        ('freemix', 'verifybamid', 'FREEMIX'),
-        ('contamination_dragen', 'DRAGEN', 'Estimated sample contamination'),
-
-        # Coverage & Yield
-        ('mean_coverage', 'DRAGEN', 'Average sequenced coverage over genome'),
-        ('median_coverage', 'DRAGEN_5', 'wgs median autosomal coverage over genome'),
-        ('pct_genome_gt_20x', 'DRAGEN_5', 'wgs pct of genome with coverage [20x:inf)'),
-        ('q30_bases_pct', 'DRAGEN', 'Q30 bases pct'),
-
-        # Alignment & Library Quality
-        ('mapping_rate_pct', 'DRAGEN', 'Mapped reads pct'),
-        ('pct_duplicate_reads', 'DRAGEN', 'Number of duplicate marked reads pct'),
-        ('mean_insert_size', 'DRAGEN', 'Insert length: mean'),
-        ('std_dev_insert_size', 'DRAGEN', 'Insert length: standard deviation'),
-        ('avg_gc_content', 'dragen-fastqc', 'avg_gc_content_percent'),
-        ('chimera_alignments', 'DRAGEN', 'Supplementary (chimeric) alignments'),
-        ('total_alignments', 'DRAGEN', 'Total alignments'),
-
-        # Sex & Ploidy
-        ('ploidy_estimation', 'DRAGEN_4', 'Ploidy estimation'),
-        ('norm_x_coverage', 'DRAGEN_4', 'X median / Autosomal median'),
-        ('norm_y_coverage', 'DRAGEN_4', 'Y median / Autosomal median'),
-
-        # Variant QC
-        ('ti_tv_ratio', 'DRAGEN_3', 'Ti/Tv ratio'),
-        ('het_hom_ratio', 'DRAGEN_3', 'Het/Hom ratio'),
-    ]
+    section_by_metric = resolve_metric_sections(multiqc_json, [metric_key for _, metric_key in METRIC_MAP])
 
     extracted_data = {}
 
     for sg in cohort_sgs:
         sample_metrics: dict[str, Any] = {}
-        missing_tools_for_this_sample = set()
+        missing_sections_for_this_sample = set()
 
-        for out_key, tool_key, metric_key in metric_map:
-            # Check tool key exists
-            if tool_key not in multiqc_json:
+        for out_key, metric_key in METRIC_MAP:
+            section_key = section_by_metric[metric_key]
+            val_by_metric = multiqc_json[section_key].get(sg.id)
+
+            if val_by_metric is None:
                 sample_metrics[out_key] = None
+                # Only log if we haven't complained about this specific section for this sample yet
+                if section_key not in missing_sections_for_this_sample:
+                    logger.warning(f"⚠️ Sequencing Group '{sg.id}' missing from MultiQC section: '{section_key}'")
+                    missing_sections_for_this_sample.add(section_key)
                 continue
 
-            # Extract metric values for sequencing group, handle missing keys
-            if sg.id not in multiqc_json[tool_key]:
-                sample_metrics[out_key] = None
-                # Only log if we haven't complained about this specific tool for this sample yet
-                if tool_key not in missing_tools_for_this_sample:
-                    logger.warning(f"⚠️ Sequencing Group '{sg.id}' missing from MultiQC module: '{tool_key}'")
-                    missing_tools_for_this_sample.add(tool_key)
-                continue
-
-            try:
-                value = multiqc_json[tool_key][sg.id][metric_key]
-                sample_metrics[out_key] = value
-            except (KeyError, TypeError):
-                # Use None if the metric is missing for this sample
-                sample_metrics[out_key] = None
+            # Use None if the metric is missing for this sample
+            sample_metrics[out_key] = val_by_metric.get(metric_key)
 
         extracted_data[sg.id] = sample_metrics
 

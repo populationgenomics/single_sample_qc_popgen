@@ -4,14 +4,20 @@
 structurally different output layouts, seemingly depending on when a sequencing group's
 ICA DRAGEN analysis ran.
 
-This matters because `jobs/run_multiqc.py` discovers each sequencing group's
-CSVs with a recursive glob (`dragen_prefix.rglob('*.csv')`) and stages them
-into one shared directory via `gcloud storage cp -I <dir>`, which copies by
-basename only. OurDNA Filipino sequencing groups have duplicate/generic-named
+This mattered because `jobs/run_multiqc.py` used to discover each sequencing
+group's CSVs with a recursive glob (`dragen_prefix.rglob('*.csv')`) and stage
+them into one shared directory via `gcloud storage cp -I <dir>`, which copies
+by basename only. OurDNA Filipino sequencing groups have duplicate/generic-named
 files nested under `supplemental/` and `sv/` that collide with each other (or
 with the top-level copy) at that shared destination path. Due to the staging,
-only the last-copied file survives to be parsed by MultiQC. Rows marked below
-as "collides" are affected; see the "Collision impact" note at the end.
+only the last-copied file survived to be parsed by MultiQC. Rows marked below
+as "collides" were affected; see the "Collision impact" note at the end.
+
+`run_multiqc.py` now stages an explicit list of top-level per-SG files
+(`MULTIQC_INPUT_SUFFIXES` in `constants.py`) instead of globbing, so the nested
+duplicates are never staged and reports built after that change carry the
+correct top-level values for both vintages. Reports and metamist QC metrics
+produced before the change are affected as described under "Collision impact".
 
 ## OurDNA Filipino pilot layout
 

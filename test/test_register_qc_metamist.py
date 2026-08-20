@@ -18,7 +18,7 @@ AVG_GC_CONTENT = 41.0
 TI_TV_RATIO = 2.0
 
 
-def make_general_stats(sg_ids: list[str]) -> dict:
+def make_general_stats(sg_ids: list[str]) -> dict[str, dict]:
     """Section layout mirroring a production multiqc_data.json
     report_general_stats_data (note the non-contiguous DRAGEN_N suffixes)."""
     return {

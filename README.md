@@ -4,7 +4,14 @@ This pipeline performs sample quality-control (QC) on single-sample sequencing d
 
 The metrics used for sample hard filters are adapted from the All Of Us Research Program (AoURP) QC thresholds. The metrics can be found in the [supplementary materials of the AoURP publication](https://www.nature.com/articles/s41586-023-06957-x#Sec32) (accompanying Word document [here](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-023-06957-x/MediaObjects/41586_2023_6957_MOESM1_ESM.docx)), as well as below.
 
-The pipeline checks for the `dragen_metrics` output of the `dragen_align_pa` pipeline. The contents of this directory are provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering. For samples that fail the hard filters, a message is sent via Slack to notify the relevant team. All pertinent QC metrics are also stored in metamist on a sequencing group level (via the `meta` field). The user can also configure to deactivate the sequencing groups that fail QC, preventing them from being used in downstream analyses.
+The pipeline reads the `dragen_metrics` output of the `dragen_align_pa` pipeline. An explicit list of per-sequencing-group DRAGEN CSVs (`MULTIQC_INPUT_SUFFIXES` in `constants.py`) is provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering.
+
+Files are listed explicitly rather than discovered by glob because `dragen_metrics/<SG>/` mixes two layout vintages, and the nested duplicates in the older layout overwrite the top-level files when staged into MultiQC's flat input directory (see `docs/dragen-output-schema.md`). A listed file missing from GCS fails the MultiQC job with an error naming the object. The list excludes:
+
+* files MultiQC does not parse (`cnv_metrics`, `sv_metrics`, `roh_metrics`, `wgs_hist`, and the per-region histogram/contig files);
+* time metrics CSVs, which record run provenance rather than sample QC. The `<SG>.dragen.time_metrics.csv` file present in newer outputs would also add a spurious `<SG>.dragen` sample to the report.
+
+`RegisterQcMetricsToMetamist` resolves the general-stats sections in `multiqc_data.json` by metric name rather than by the positional `DRAGEN_N` section keys, whose numbering depends on the input file mix. A metric that resolves to zero or to multiple sections fails the job rather than registering wrong values. For samples that fail the hard filters, a message is sent via Slack to notify the relevant team. All pertinent QC metrics are also stored in metamist on a sequencing group level (via the `meta` field). The user can also configure to deactivate the sequencing groups that fail QC, preventing them from being used in downstream analyses.
 
 **Note:** Call rate was only conducted on array data and as such is not included in this pipelines QC filters.
 | **QC Check** | **Data Type** | **Pass Threshold** | **Purpose / Error Detected** | **Action / Outcome** |

@@ -8,7 +8,6 @@ from cpg_flow.stage import (
     stage,
 )
 from cpg_flow.targets import Cohort
-from loguru import logger
 
 if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
@@ -76,14 +75,10 @@ class RunMultiQc(CohortStage):
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002
         outputs: dict[str, cpg_utils.Path] = self.expected_outputs(cohort=cohort)
 
-        multiqc_job: BashJob | None = run_multiqc.run_multiqc(
+        multiqc_job: BashJob = run_multiqc.run_multiqc(
             cohort=cohort,
             outputs=outputs,
         )
-
-        if not multiqc_job:
-            logger.warning('MultiQC job was not created (no input files found). Skipping stage.')
-            return self.make_outputs(cohort, skipped=True)
 
         return self.make_outputs(target=cohort, data=outputs, jobs=multiqc_job)  # pyright: ignore[reportArgumentType]
 

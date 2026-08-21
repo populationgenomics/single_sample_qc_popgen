@@ -3,48 +3,57 @@ Batch jobs to run MultiQC.
 """
 
 import os
+from collections import Counter
+from collections.abc import Sequence
 
 from cpg_flow.targets import Cohort
-from cpg_utils import Path, to_path
+from cpg_utils import Path
 from cpg_utils.config import image_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
 
+from single_sample_qc_popgen.constants import MULTIQC_INPUT_SUFFIXES
 from single_sample_qc_popgen.utils import get_dragen_output_path, get_qc_path
+
+
+def dragen_qc_paths(sg_names: Sequence[str]) -> list[Path]:
+    """Builds the explicit per-SG paths to the DRAGEN CSVs that MultiQC parses.
+
+    Args:
+        sg_names: Sequencing group names in the cohort.
+
+    Returns:
+        One path per sequencing group per suffix in MULTIQC_INPUT_SUFFIXES.
+
+    Raises:
+        ValueError: If sg_names is empty, or if two paths share a basename
+            (duplicates would clobber each other in the flat staging directory).
+    """
+    if not sg_names:
+        raise ValueError('No sequencing groups to aggregate with MultiQC')
+
+    paths = [
+        get_dragen_output_path(filename=f'dragen_metrics/{sg_name}/{sg_name}.{suffix}')
+        for sg_name in sg_names
+        for suffix in MULTIQC_INPUT_SUFFIXES
+    ]
+
+    duplicates = [name for name, count in Counter(p.name for p in paths).items() if count > 1]
+    if duplicates:
+        raise ValueError(f'Duplicate basenames would clobber each other in the MultiQC staging dir: {duplicates}')
+
+    return paths
 
 
 def run_multiqc(
     cohort: Cohort,
     outputs: dict[str, Path],
-) -> BashJob | None:
-    """
-    Creates and calls the Job to run MultiQC.
-    Gathers all required QC input paths.
-    """
-    # 1. Collect all individual Dragen CSV file paths
-    all_dragen_csv_paths: list[Path] = []
-    for sg in cohort.get_sequencing_groups():
-        dragen_prefix = get_dragen_output_path(filename=f'dragen_metrics/{sg.name}')
+) -> BashJob:
+    """Creates the batch job that runs MultiQC on the per-SG DRAGEN QC files."""
+    qc_file_paths = dragen_qc_paths([sg.name for sg in cohort.get_sequencing_groups()])
+    logger.info(f'Staging {len(qc_file_paths)} QC files for MultiQC aggregation.')
 
-        try:
-            # Use rglob to find all CSV files recursively within the SG's metric directory
-            found_paths = [to_path(p) for p in dragen_prefix.rglob('*.csv')]
-            all_dragen_csv_paths.extend(found_paths)
-        except FileNotFoundError:
-            logger.warning(f'Directory {dragen_prefix} not found when searching for Dragen CSVs.')
-        except Exception as e:  # noqa: BLE001
-            logger.error(f'Error searching for CSVs in {dragen_prefix}: {e}')
-
-    # 2. Check if we found anything
-    if not all_dragen_csv_paths:
-        logger.warning('No QC files (Dragen CSVs) found to aggregate with MultiQC')
-        return None  # Return None to signal the stage to skip
-
-    logger.info(f'Found {len(all_dragen_csv_paths)} QC files for MultiQC aggregation.')
-    logger.info(f'Example QC paths: {all_dragen_csv_paths[:5]}')
-
-    # 3. Create the Job
     b = get_batch()
     multiqc_job: BashJob = b.new_job(
         name='MultiQC',
@@ -57,7 +66,7 @@ def run_multiqc(
     # Write the list of QC file paths to a temporary input file
     qc_files_path: Path = get_qc_path(f'{cohort.name}_multiqc_input.txt', category='tmp')
 
-    qc_files_path.write_text('\n'.join(str(p) for p in all_dragen_csv_paths))
+    qc_files_path.write_text('\n'.join(str(p) for p in qc_file_paths))
 
     b_input_dir_resource = b.read_input(qc_files_path)
     local_metrics_dir = os.path.join(str(multiqc_job.outdir), 'metrics_input')
@@ -70,9 +79,15 @@ def run_multiqc(
         }
     )
 
-    # Define the command
+    # CLOUDSDK_STORAGE_* match the job's 8 CPUs: the inputs are thousands of
+    # small CSVs, so the copy is bound by request latency, not bandwidth.
     multiqc_job.command(
         f"""
+        set -euo pipefail
+
+        export CLOUDSDK_STORAGE_PROCESS_COUNT=8
+        export CLOUDSDK_STORAGE_THREAD_COUNT=8
+
         mkdir -p {local_metrics_dir}
 
         gcloud auth list > /dev/null
@@ -84,8 +99,7 @@ def run_multiqc(
         -o {multiqc_job.outdir} \\
         --title 'MultiQC Report for {cohort.name}' \\
         --filename '{report_name}.html' \\
-        --cl-config 'max_table_rows: 10000' \\
-        --ignore '*time_metrics*'
+        --cl-config 'max_table_rows: 10000'
 
         mv {multiqc_job.outdir}/{report_name}.html {multiqc_job.html}
         mv {multiqc_job.outdir}/{report_name}_data/multiqc_data.json {multiqc_job.json}

@@ -29,6 +29,18 @@ chimera_rate = 0.03
 [qc_thresholds.genome.equality]
 ploidy_estimation = true
 
+# median_coverage is the on-target (target bed) median autosomal coverage.
+# pct_target_gt_20x, contamination_dragen and ploidy_estimation are not set for
+# exomes yet: they need a calibration pass across both mackenzie capture designs
+# (twist-vcgs, CREv2) and sequencing sites first.
+[qc_thresholds.exome.min]
+median_coverage = 50
+mapping_rate_pct = 80
+q30_bases_pct = 80
+
+[qc_thresholds.exome.max]
+chimera_rate = 0.03
+
 # Sex-karyotype derivation (LoY rescue, raw-f-stat ambiguous gate) lives
 # downstream in ourdna_genomic_atlas, alongside the ancestry-aware f-stat
 # renormalisation that shares the same raw signals. This repo emits raw

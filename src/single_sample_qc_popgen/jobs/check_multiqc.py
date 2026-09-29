@@ -124,6 +124,7 @@ class QCChecker:
     def __init__(self, cohort: Cohort, multiqc_data: dict, sequencing_type: str):
         profile = get_sequencing_type_profile(sequencing_type)
         mean_coverage = profile.mean_coverage
+        median_coverage = profile.median_coverage
         pct_gt_20x = profile.pct_gt_20x
         self.cohort = cohort
         self.cohort_sgs = self.cohort.get_sequencing_groups()
@@ -139,6 +140,10 @@ class QCChecker:
             mean_coverage.meta_key: {
                 'multiqc_report_name': mean_coverage.multiqc_name,
                 'display_name': mean_coverage.display_name,
+            },
+            median_coverage.meta_key: {
+                'multiqc_report_name': median_coverage.multiqc_name,
+                'display_name': median_coverage.display_name,
             },
             'ploidy_estimation': {
                 'calculator': self._calculate_ploidy,
@@ -266,9 +271,12 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
         ploidy_estimation = True
 
     Raises:
-        RuntimeError: If there is no qc_thresholds block for seq_type at all.
-            A missing min/max/equality sub-block within an existing seq_type
-            block just means no thresholds of that kind.
+        RuntimeError: If there is no qc_thresholds block for seq_type at all,
+            or if a threshold names a metric that is not in qc_checker.QC_MAPPING.
+            A threshold on an unmapped metric would never be enforced, because
+            no MultiQC value exists under an unmapped name. A missing
+            min/max/equality sub-block within an existing seq_type block just
+            means no thresholds of that kind.
     """
     thresholds_by_seq_type = get_config().get('qc_thresholds', {})
     if seq_type not in thresholds_by_seq_type:
@@ -279,22 +287,15 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
     threshold_d = thresholds_by_seq_type[seq_type].get(config_key, {})
     qc_thresholds = {}
     for metric, threshold in threshold_d.items():
-        if metric in qc_checker.QC_MAPPING:
-            qc_thresholds[metric] = {
-                'threshold': threshold,
-                **qc_checker.QC_MAPPING[metric],
-            }
-        else:
-            logger.warning(
-                f"Metric '{metric}' has a threshold but is not defined in QC_MAPPING. "
-                f"Using default names."
-                f"Default names are the following: {list(qc_checker.QC_MAPPING.keys())}"
+        if metric not in qc_checker.QC_MAPPING:
+            raise RuntimeError(
+                f"[qc_thresholds.{seq_type}.{config_key}] sets '{metric}', which is not a valid metric for "
+                f'{seq_type} and would never be enforced. Valid metrics: {sorted(qc_checker.QC_MAPPING)}'
             )
-            qc_thresholds[metric] = {
-                'threshold': threshold,
-                'multiqc_report_name': metric,
-                'display_name': metric,
-            }
+        qc_thresholds[metric] = {
+            'threshold': threshold,
+            **qc_checker.QC_MAPPING[metric],
+        }
     return qc_thresholds
 
 def get_metric_value(

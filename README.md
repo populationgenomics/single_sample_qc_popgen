@@ -81,7 +81,7 @@ ploidy_estimation = true  # Expect ploidy estimation to match reported sex mappi
 dragen_version = 'dragen_3_7_8'  # DRAGEN version tag used for locating metrics
 ```
 
-Thresholds are read from `[qc_thresholds.<sequencing_type>.*]`; a run with no `qc_thresholds.<sequencing_type>` block at all raises rather than applying no thresholds (a missing `min`, `max` or `equality` sub-block within an existing block is fine).
+Thresholds are read from `[qc_thresholds.<sequencing_type>.*]`; a run with no `qc_thresholds.<sequencing_type>` block at all raises rather than applying no thresholds (a missing `min`, `max` or `equality` sub-block within an existing block is fine). A threshold on a metric that is not in that sequencing type's `QC_MAPPING` also raises, because it could never be enforced; the error lists the valid metric names.
 
 Note: Adjust thresholds per dataset QC policy. Setting `send_to_slack = false` suppresses notifications; enabling `deactivate_sgs` removes failing samples from downstream use.
 
@@ -96,9 +96,9 @@ The pipeline selects MultiQC inputs and coverage metric names from `workflow.seq
 | Median coverage (`median_coverage`) | `wgs median autosomal coverage over genome` | `target bed median autosomal coverage over target region` |
 | Fraction at ≥20x coverage | `pct_genome_gt_20x` from `wgs pct of genome with coverage [20x:inf)` | `pct_target_gt_20x` from `target bed pct of target region with coverage [20x:inf)` |
 
-`mean_coverage` and `median_coverage` keep their names for both types in the metamist `qc` meta and in `qc_thresholds`. The ≥20x metric is named for its denominator, so an exome threshold is configured as `[qc_thresholds.exome.min] pct_target_gt_20x = ...`. The metric names are those MultiQC 1.30 (the pipeline's image version) emits for DRAGEN exome metrics.
+`mean_coverage` and `median_coverage` keep their names for both types in the metamist `qc` meta and in `qc_thresholds`, and both can be thresholded (the default genome block sets neither). The ≥20x metric is named for its denominator, so an exome threshold is configured as `[qc_thresholds.exome.min] pct_target_gt_20x = ...`. The metric names are those MultiQC 1.30 (the pipeline's image version) emits for DRAGEN exome metrics.
 
-**Exome thresholds are not in the default config.** They are a pending decision, so `config/single_sample_qc_popgen.toml` only carries `[qc_thresholds.genome.*]`. An exome run must supply its own `[qc_thresholds.exome.min|max|equality]` blocks in its run config, or `CheckMultiQc` raises. Note that a genome-named key such as `pct_genome_gt_20x` in an exome block is not in the exome `QC_MAPPING`, so it is logged as an undefined metric and never enforced.
+**Default exome thresholds.** `config/single_sample_qc_popgen.toml` carries an exome block alongside the genome one: `median_coverage >= 50` (on-target median autosomal coverage), `mapping_rate_pct >= 80`, `q30_bases_pct >= 80` and `chimera_rate <= 0.03`. `pct_target_gt_20x`, `contamination_dragen` and `ploidy_estimation` are deliberately not set for exomes yet; they wait on a calibration pass across both mackenzie capture designs (twist-vcgs, CREv2) and sequencing sites. A run config can override any of these or add the deferred ones. Metric names must be in the sequencing type's `QC_MAPPING`: a genome-named key such as `pct_genome_gt_20x` in an exome block raises, and so does any other unmapped key.
 
 ## Sample-swap check
 

@@ -446,3 +446,42 @@ def test_register_stage_other_inputs_do_not_depend_on_the_switch(monkeypatch):
     enabled_kwargs.pop('swap_check_path')
     disabled_kwargs.pop('swap_check_path')
     assert enabled_kwargs == disabled_kwargs
+
+
+# --- stage output versions ----------------------------------------------------
+
+
+def fake_version_config(values: dict[tuple[str, ...], str]) -> Any:
+    def fake(keys: list[str], default: str | None = None) -> str | None:
+        return values.get(tuple(keys), default)
+
+    return fake
+
+
+def test_register_stage_defaults_to_v2(monkeypatch):
+    # v1 registrations predate the swap check; reusing them left swap_check out of metamist.
+    monkeypatch.setattr(stages, 'config_retrieve', fake_version_config({}))
+
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v2'
+    assert stages.resolve_stage_version('RunMultiQc') == 'v1'
+
+
+def test_workflow_version_overrides_stage_defaults(monkeypatch):
+    monkeypatch.setattr(stages, 'config_retrieve', fake_version_config({('workflow', 'version'): 'v7'}))
+
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v7'
+    assert stages.resolve_stage_version('RunMultiQc') == 'v7'
+
+
+def test_per_stage_output_version_overrides_everything(monkeypatch):
+    monkeypatch.setattr(
+        stages,
+        'config_retrieve',
+        fake_version_config({
+            ('workflow', 'version'): 'v7',
+            ('workflow', 'output_versions', 'RegisterQcMetricsToMetamist'): 'v1',
+        }),
+    )
+
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v1'
+    assert stages.resolve_stage_version('RunMultiQc') == 'v7'

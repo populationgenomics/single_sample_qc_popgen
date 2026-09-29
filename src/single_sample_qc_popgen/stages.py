@@ -57,14 +57,41 @@ def resolve_array_pgen_paths() -> tuple[str, str, str]:
     return derive_pgen_sibling_paths(query_array_pgen_path(rolling_aggregate_cohort_id))
 
 
+# cpg-flow reuses a stage whenever its expected output path exists, regardless of
+# whether its inputs changed. A stage whose inputs or outputs change must therefore
+# get a new default version here, or cohorts that already ran it keep the old result.
+#
+# RegisterQcMetricsToMetamist is v2 because the swap check became one of its inputs.
+# OurDNA cohorts registered before the swap check worked kept their v1
+# {cohort}_registered.json, so re-runs reused it and never wrote the new swap_check
+# into metamist: 13 cohorts, 846 COH15110 SGs (e.g. COH13800 registered 2026-06-29,
+# swap check 2026-08-18). v2 also covers the exome keys and the swap_check.enabled
+# switch, which change what registration writes.
+STAGE_DEFAULT_VERSIONS: dict[str, str] = {
+    'RegisterQcMetricsToMetamist': 'v2',
+}
+
+
+def resolve_stage_version(stage_name: str) -> str:
+    """Output version for a stage.
+
+    Precedence: workflow.output_versions.<stage>, then workflow.version, then the
+    stage's STAGE_DEFAULT_VERSIONS entry, then 'v1'. Explicit config always wins.
+    """
+    return (
+        config_retrieve(['workflow', 'output_versions', stage_name], None)
+        or config_retrieve(['workflow', 'version'], None)
+        or STAGE_DEFAULT_VERSIONS.get(stage_name, 'v1')
+    )
+
+
 def get_output_prefix(cohort: Cohort, stage_name: str, category: str | None = None) -> Path:
     """
     Standardised output prefix for CohortStage outputs.
     Format: cohort.dataset.prefix() / workflow.name / stage_name / cohort.id / version
     Pass category='web' for files that should be publicly accessible via the web bucket.
     """
-    stage_version = config_retrieve(['workflow', 'output_versions', stage_name], None)
-    version = stage_version or config_retrieve(['workflow', 'version'], 'v1')
+    version = resolve_stage_version(stage_name)
     prefix_kwargs = {'category': category} if category else {}
     return cohort.dataset.prefix(**prefix_kwargs) / get_workflow().name / stage_name / cohort.id / version
 

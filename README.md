@@ -106,6 +106,14 @@ Five stages (`PrepareSampleSwap`, `SwapCheckExportVcf`, `SwapCheckSomalierExtrac
 
 `workflow.swap_check.enabled` (required, no code default; `true` in `config/single_sample_qc_popgen.toml`) switches the check. Cohorts without arrays set `enabled = false` in their run config. `RegisterQcMetricsToMetamist` then no longer requires `SwapCheckClassify`, so none of the five stages are in the workflow, and no `swap_check` key is written to `sg.meta['qc']`. With `enabled = true` behaviour is unchanged.
 
+## Output versions and reuse
+
+Each stage writes under `.../<stage>/<cohort>/<version>/`, and cpg-flow reuses a stage whenever the files at that path exist. It does not check whether the stage's inputs or code changed. So when a change gives a stage new inputs or changes what it writes, bump that stage's entry in `STAGE_DEFAULT_VERSIONS` (`stages.py`). Otherwise cohorts that already ran it silently keep the old result.
+
+`RegisterQcMetricsToMetamist` defaults to `v2` for this reason. OurDNA cohorts registered before the swap check worked kept their `v1/{cohort}_registered.json`. Later runs produced swap-check results but reused that file, so `swap_check` never reached metamist. That affected 13 cohorts and 846 of the 1254 `COH15110` SGs; for example, COH13800 was registered on 2026-06-29 and its swap check ran on 2026-08-18. On its next run, each cohort re-registers once under `v2`, reusing its existing MultiQC and swap-check outputs.
+
+Version precedence: `workflow.output_versions.<stage>`, then `workflow.version`, then `STAGE_DEFAULT_VERSIONS`, then `v1`.
+
 ## How to Run the Pipeline
 
 The pipeline is launched using `analysis-runner`.

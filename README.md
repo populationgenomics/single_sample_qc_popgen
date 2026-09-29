@@ -4,7 +4,7 @@ This pipeline performs sample quality-control (QC) on single-sample sequencing d
 
 The metrics used for sample hard filters are adapted from the All Of Us Research Program (AoURP) QC thresholds. The metrics can be found in the [supplementary materials of the AoURP publication](https://www.nature.com/articles/s41586-023-06957-x#Sec32) (accompanying Word document [here](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-023-06957-x/MediaObjects/41586_2023_6957_MOESM1_ESM.docx)), as well as below.
 
-The pipeline reads the `dragen_metrics` output of the `dragen_align_pa` pipeline. An explicit list of per-sequencing-group DRAGEN CSVs (`MULTIQC_INPUT_SUFFIXES` in `constants.py`) is provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering.
+The pipeline reads the `dragen_metrics` output of the `dragen_align_pa` pipeline. An explicit list of per-sequencing-group DRAGEN CSVs (`MULTIQC_BASE_INPUT_SUFFIXES` in `constants.py`, plus four `target_bed_*` files for exomes) is provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering.
 
 Files are listed explicitly rather than discovered by glob because `dragen_metrics/<SG>/` mixes two layout vintages, and the nested duplicates in the older layout overwrite the top-level files when staged into MultiQC's flat input directory (see `docs/dragen-output-schema.md`). A listed file missing from GCS fails the MultiQC job with an error naming the object. The list excludes:
 
@@ -47,13 +47,16 @@ Your TOML configuration file must specify the following key options:
   * `[workflow]`:
 
       * `input_cohorts`: A list of Metamist cohort IDs to process (e.g., `['COH0001']`).
-      * `sequencing_type`: Must be set (e.g., `"genome"`).
+      * `sequencing_type`: Must be set to `"genome"` or `"exome"`; any other value raises. See [Sequencing types](#sequencing-types).
       * `last_stages`: A list of the final stages to run. To run the full pipeline use `['RegisterQcMetricsToMetamist']`.
       * `skip_stages`: (Optional) A list of stages to skip, e.g., `['RunMultiQc']`.
 
 Additional required/optional sections:
 
 ```toml
+[workflow.swap_check]
+enabled = true            # false for cohorts without genotyping arrays. See "Sample-swap check" below
+
 [cramqc]
 assume_sorted = true
 num_pcs = 4               # Number of principal components (if used in derived metrics)
@@ -78,7 +81,30 @@ ploidy_estimation = true  # Expect ploidy estimation to match reported sex mappi
 dragen_version = 'dragen_3_7_8'  # DRAGEN version tag used for locating metrics
 ```
 
+Thresholds are read from `[qc_thresholds.<sequencing_type>.*]`; a run with no `qc_thresholds.<sequencing_type>` block at all raises rather than applying no thresholds (a missing `min`, `max` or `equality` sub-block within an existing block is fine).
+
 Note: Adjust thresholds per dataset QC policy. Setting `send_to_slack = false` suppresses notifications; enabling `deactivate_sgs` removes failing samples from downstream use.
+
+## Sequencing types
+
+The pipeline selects MultiQC inputs and coverage metric names from `workflow.sequencing_type` (`SEQUENCING_TYPE_PROFILES` in `constants.py`). Only `"genome"` and `"exome"` are supported; any other value raises rather than falling back to genome.
+
+| | `genome` | `exome` |
+|---|---|---|
+| MultiQC inputs | `MULTIQC_BASE_INPUT_SUFFIXES` | base list plus `target_bed_{coverage_metrics,overall_mean_cov,contig_mean_cov,fine_hist}.csv` |
+| Mean coverage (`mean_coverage`) | `Average sequenced coverage over genome` | `Average sequenced coverage over target region` |
+| Median coverage (`median_coverage`) | `wgs median autosomal coverage over genome` | `target bed median autosomal coverage over target region` |
+| Fraction at ≥20x coverage | `pct_genome_gt_20x` from `wgs pct of genome with coverage [20x:inf)` | `pct_target_gt_20x` from `target bed pct of target region with coverage [20x:inf)` |
+
+`mean_coverage` and `median_coverage` keep their names for both types in the metamist `qc` meta and in `qc_thresholds`. The ≥20x metric is named for its denominator, so an exome threshold is configured as `[qc_thresholds.exome.min] pct_target_gt_20x = ...`. The metric names are those MultiQC 1.30 (the pipeline's image version) emits for DRAGEN exome metrics.
+
+**Exome thresholds are not in the default config.** They are a pending decision, so `config/single_sample_qc_popgen.toml` only carries `[qc_thresholds.genome.*]`. An exome run must supply its own `[qc_thresholds.exome.min|max|equality]` blocks in its run config, or `CheckMultiQc` raises. Note that a genome-named key such as `pct_genome_gt_20x` in an exome block is not in the exome `QC_MAPPING`, so it is logged as an undefined metric and never enforced.
+
+## Sample-swap check
+
+Five stages (`PrepareSampleSwap`, `SwapCheckExportVcf`, `SwapCheckSomalierExtract`, `SwapCheckSomalierRelate`, `SwapCheckClassify`) compare each WGS somalier sketch against the sketches of a genotyping-array cohort to detect sample swaps. Their result is registered under `sg.meta['qc']['swap_check']` by `RegisterQcMetricsToMetamist`. This needs `workflow.swap_check.rolling_aggregate_cohort_id` and an `array_aggregate_pgen` analysis registered against that cohort.
+
+`workflow.swap_check.enabled` (required, no code default; `true` in `config/single_sample_qc_popgen.toml`) switches the check. Cohorts without arrays set `enabled = false` in their run config. `RegisterQcMetricsToMetamist` then no longer requires `SwapCheckClassify`, so none of the five stages are in the workflow, and no `swap_check` key is written to `sg.meta['qc']`. With `enabled = true` behaviour is unchanged.
 
 ## How to Run the Pipeline
 

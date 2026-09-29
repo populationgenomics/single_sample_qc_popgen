@@ -20,7 +20,7 @@ from cpg_utils.slack import send_message
 from loguru import logger
 from metamist.graphql import gql, query
 
-from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL
+from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL, get_sequencing_type_profile
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
 from single_sample_qc_popgen.utils import load_json
 
@@ -121,7 +121,11 @@ class QCChecker:
     Encapsulates all logic for checking a MultiQC report for a cohort.
     """
     # Now accepts multiqc_data directly, rather than finding it itself
-    def __init__(self, cohort: Cohort, multiqc_data: dict):
+    def __init__(self, cohort: Cohort, multiqc_data: dict, sequencing_type: str):
+        profile = get_sequencing_type_profile(sequencing_type)
+        mean_coverage = profile.mean_coverage
+        median_coverage = profile.median_coverage
+        pct_gt_20x = profile.pct_gt_20x
         self.cohort = cohort
         self.cohort_sgs = self.cohort.get_sequencing_groups()
         self.sex_mapping, self.control_sg_ids = get_sgid_reported_sex_mapping_and_control_ids(self.cohort)
@@ -133,18 +137,22 @@ class QCChecker:
             self.cohort_sgs,
         )
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
-            'mean_coverage': {
-                'multiqc_report_name': 'Average sequenced coverage over genome',
-                'display_name': 'Mean Coverage',
+            mean_coverage.meta_key: {
+                'multiqc_report_name': mean_coverage.multiqc_name,
+                'display_name': mean_coverage.display_name,
+            },
+            median_coverage.meta_key: {
+                'multiqc_report_name': median_coverage.multiqc_name,
+                'display_name': median_coverage.display_name,
             },
             'ploidy_estimation': {
                 'calculator': self._calculate_ploidy,
                 'multiqc_report_name': 'Ploidy estimation',
                 'display_name': 'Ploidy Estimation',
             },
-            'pct_genome_gt_20x': {
-                'multiqc_report_name': 'wgs pct of genome with coverage [20x:inf)',
-                'display_name': 'Pct Genome @ >20x',
+            pct_gt_20x.meta_key: {
+                'multiqc_report_name': pct_gt_20x.multiqc_name,
+                'display_name': pct_gt_20x.display_name,
             },
             'q30_bases': {
                 'multiqc_report_name': 'Q30 bases',
@@ -261,26 +269,33 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
         chimera_rate = 0.05
         [qc_thresholds.genome.equality]
         ploidy_estimation = True
+
+    Raises:
+        RuntimeError: If there is no qc_thresholds block for seq_type at all,
+            or if a threshold names a metric that is not in qc_checker.QC_MAPPING.
+            A threshold on an unmapped metric would never be enforced, because
+            no MultiQC value exists under an unmapped name. A missing
+            min/max/equality sub-block within an existing seq_type block just
+            means no thresholds of that kind.
     """
-    threshold_d = get_config()['qc_thresholds'].get(seq_type, {}).get(config_key, {})
+    thresholds_by_seq_type = get_config().get('qc_thresholds', {})
+    if seq_type not in thresholds_by_seq_type:
+        raise RuntimeError(
+            f'No [qc_thresholds.{seq_type}] block in config; without one no QC thresholds would be '
+            f'applied to {seq_type} data. Blocks present: {sorted(thresholds_by_seq_type)}'
+        )
+    threshold_d = thresholds_by_seq_type[seq_type].get(config_key, {})
     qc_thresholds = {}
     for metric, threshold in threshold_d.items():
-        if metric in qc_checker.QC_MAPPING:
-            qc_thresholds[metric] = {
-                'threshold': threshold,
-                **qc_checker.QC_MAPPING[metric],
-            }
-        else:
-            logger.warning(
-                f"Metric '{metric}' has a threshold but is not defined in QC_MAPPING. "
-                f"Using default names."
-                f"Default names are the following: {list(qc_checker.QC_MAPPING.keys())}"
+        if metric not in qc_checker.QC_MAPPING:
+            raise RuntimeError(
+                f"[qc_thresholds.{seq_type}.{config_key}] sets '{metric}', which is not a valid metric for "
+                f'{seq_type} and would never be enforced. Valid metrics: {sorted(qc_checker.QC_MAPPING)}'
             )
-            qc_thresholds[metric] = {
-                'threshold': threshold,
-                'multiqc_report_name': metric,
-                'display_name': metric,
-            }
+        qc_thresholds[metric] = {
+            'threshold': threshold,
+            **qc_checker.QC_MAPPING[metric],
+        }
     return qc_thresholds
 
 def get_metric_value(
@@ -423,9 +438,8 @@ def run(
             multiqc_data_path,
             extract_key='report_general_stats_data'
         )
-    qc_checker = QCChecker(cohort, multiqc_data)
-
     seq_type = get_config()['workflow']['sequencing_type']
+    qc_checker = QCChecker(cohort, multiqc_data, seq_type)
 
     # Run checks
     bad_lines_by_sample = defaultdict(list)

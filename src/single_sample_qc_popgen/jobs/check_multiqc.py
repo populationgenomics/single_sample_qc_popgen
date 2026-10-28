@@ -162,10 +162,6 @@ class QCChecker:
                 'multiqc_report_name': 'Q30 bases pct',
                 'display_name': 'Q30 Bases (%)',
             },
-            'contamination_verifybamid': {
-                'multiqc_report_name': 'FREEMIX',
-                'display_name': 'Contamination (VerifyBamID)',
-            },
             'contamination_dragen': {
                 'multiqc_report_name': 'Estimated sample contamination',
                 'display_name': 'Contamination (DRAGEN)',
@@ -271,20 +267,23 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
         ploidy_estimation = True
 
     Raises:
-        RuntimeError: If there is no qc_thresholds block for seq_type at all,
-            or if a threshold names a metric that is not in qc_checker.QC_MAPPING.
+        RuntimeError: If seq_type has no thresholds at all (its block is missing,
+            or its min/max/equality sub-blocks are all missing or empty), or if
+            a threshold names a metric that is not in qc_checker.QC_MAPPING.
             A threshold on an unmapped metric would never be enforced, because
             no MultiQC value exists under an unmapped name. A missing
-            min/max/equality sub-block within an existing seq_type block just
-            means no thresholds of that kind.
+            min/max/equality sub-block alongside a non-empty one just means no
+            thresholds of that kind.
     """
     thresholds_by_seq_type = get_config().get('qc_thresholds', {})
-    if seq_type not in thresholds_by_seq_type:
+    thresholds_for_type = thresholds_by_seq_type.get(seq_type, {})
+    if not any(thresholds_for_type.get(kind) for kind in ('min', 'max', 'equality')):
         raise RuntimeError(
-            f'No [qc_thresholds.{seq_type}] block in config; without one no QC thresholds would be '
-            f'applied to {seq_type} data. Blocks present: {sorted(thresholds_by_seq_type)}'
+            f'No thresholds under [qc_thresholds.{seq_type}] in config (min, max and equality are all missing '
+            f'or empty); no QC thresholds would be applied to {seq_type} data. '
+            f'Blocks present: {sorted(thresholds_by_seq_type)}'
         )
-    threshold_d = thresholds_by_seq_type[seq_type].get(config_key, {})
+    threshold_d = thresholds_for_type.get(config_key, {})
     qc_thresholds = {}
     for metric, threshold in threshold_d.items():
         if metric not in qc_checker.QC_MAPPING:

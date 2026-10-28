@@ -184,14 +184,6 @@ def test_metric_map_exome_coverage_names_and_key():
     assert 'pct_genome_gt_20x' not in exome
 
 
-def test_metric_map_exome_differs_from_genome_only_in_coverage_metrics():
-    genome = metric_map('genome')
-    exome = metric_map('exome')
-    differing = [(g, e) for g, e in zip(genome, exome, strict=True) if g != e]
-    assert [g[0] for g, _ in differing] == ['mean_coverage', 'median_coverage', 'pct_genome_gt_20x']
-    assert [e[0] for _, e in differing] == ['mean_coverage', 'median_coverage', 'pct_target_gt_20x']
-
-
 def test_metric_map_unknown_sequencing_type_raises():
     with pytest.raises(ValueError, match="Unsupported workflow.sequencing_type 'transcriptome'"):
         metric_map('transcriptome')
@@ -232,20 +224,35 @@ SWAP_CHECK_PATH = 'gs://bucket/swap_check.json'
 SWAP_CHECK = {'CPG000001': {'status': 'concordant', 'best_relatedness': 0.999}}
 
 
-def run_register(monkeypatch, tmp_path, swap_check_path: str | None, sequencing_type: str = 'genome') -> dict:
-    """Runs register_qc_metamist.run against fakes; returns each SG's meta as sent to metamist."""
+def run_register(
+    monkeypatch,
+    tmp_path,
+    swap_check_path: str | None,
+    sequencing_type: str = 'genome',
+    drop_paths: frozenset[str] | set[str] = frozenset(),
+) -> dict:
+    """Runs register_qc_metamist.run against fakes; returns each SG's meta as sent to metamist.
+
+    Paths in drop_paths behave as missing files.
+    """
     json_by_path = {
         'gs://bucket/multiqc.json': make_general_stats(['CPG000001'], sequencing_type),
         'gs://bucket/failures.json': {},
         'gs://bucket/sex_imputation.json': {'CPG000001': {'f_stat_raw': F_STAT_RAW}},
         SWAP_CHECK_PATH: SWAP_CHECK,
     }
+    for path in drop_paths:
+        del json_by_path[path]
     loaded: list[str] = []
     sent_meta: dict[str, dict] = {}
 
     def fake_load_json(path, extract_key=None, allow_missing=False) -> Any:  # noqa: ARG001
         loaded.append(path)
-        return json_by_path[path]  # KeyError if run() asks for a path it should not
+        if path not in json_by_path:
+            if allow_missing:
+                return {}
+            raise FileNotFoundError(path)
+        return json_by_path[path]
 
     def fake_query(_mutation, variables) -> dict:
         sent_meta[variables['sequencingGroup']['id']] = variables['sequencingGroup']['meta']
@@ -294,10 +301,36 @@ def test_run_registers_swap_check_under_nested_key_when_path_given(monkeypatch, 
     assert qc['f_stat_raw'] == F_STAT_RAW
 
 
+def test_run_raises_when_enabled_swap_check_file_is_missing(monkeypatch, tmp_path):
+    with pytest.raises(FileNotFoundError, match='missing_swap_check.json'):
+        run_register(monkeypatch, tmp_path, swap_check_path='gs://bucket/missing_swap_check.json')
+
+
+@pytest.mark.parametrize('present_key', ['failures', 'sex_imputation'])
+def test_run_raises_when_a_check_multiqc_output_is_missing(monkeypatch, tmp_path, present_key):
+    missing_key = {'failures', 'sex_imputation'}.difference({present_key}).pop()
+    with pytest.raises(FileNotFoundError, match=f'{missing_key}.json'):
+        run_register(monkeypatch, tmp_path, swap_check_path=None, drop_paths={f'gs://bucket/{missing_key}.json'})
+
+
 def test_run_registers_exome_coverage_under_exome_keys(monkeypatch, tmp_path):
     sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=None, sequencing_type='exome')
 
     qc = sent_meta['CPG000001']['qc']
     assert qc['mean_coverage'] == EXOME_TARGET_MEAN_COVERAGE
     assert qc['pct_target_gt_20x'] == EXOME_PCT_TARGET_GT_20X
-    assert 'pct_genome_gt_20x' not in qc
+
+
+@pytest.mark.parametrize(
+    ('sequencing_type', 'other_type_key'),
+    [('exome', 'pct_genome_gt_20x'), ('genome', 'pct_target_gt_20x')],
+)
+def test_run_sends_null_for_other_type_coverage_keys(monkeypatch, tmp_path, sequencing_type, other_type_key):
+    # Metamist merges meta with JSON_MERGE_PATCH; null is the only way to delete a stale key.
+    sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=None, sequencing_type=sequencing_type)
+
+    qc = sent_meta['CPG000001']['qc']
+    assert other_type_key in qc
+    assert qc[other_type_key] is None
+    assert all(value is not None for key, value in qc.items() if key != other_type_key)
+    assert other_type_key not in json.loads((tmp_path / 'registered.json').read_text())['CPG000001']

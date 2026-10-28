@@ -319,34 +319,22 @@ def reachable_stage_names(required_stages) -> set[str]:
     return names
 
 
-def test_register_required_stages_include_swap_check_when_enabled():
-    assert stages.register_required_stages(True) == [
+@pytest.mark.usefixtures('stage_init_without_workflow')
+def test_enabled_register_stage_requires_swap_check_classify():
+    # The test config (conftest) has the swap check enabled; the disabled branch is
+    # covered by test_disabled_config_drops_swap_check_from_the_decorated_stage.
+    assert stages.SWAP_CHECK_ENABLED is True
+    assert stages.RegisterQcMetricsToMetamist().required_stages_classes == [
         stages.RunMultiQc,
         stages.CheckMultiQc,
         stages.SwapCheckClassify,
     ]
 
 
-def test_register_required_stages_exclude_swap_check_when_disabled():
-    assert stages.register_required_stages(False) == [stages.RunMultiQc, stages.CheckMultiQc]
-
-
 @pytest.mark.usefixtures('stage_init_without_workflow')
-def test_all_swap_check_stages_are_reachable_when_enabled():
-    reachable = reachable_stage_names(stages.register_required_stages(True))
+def test_enabled_register_stage_reaches_every_swap_check_stage():
+    reachable = reachable_stage_names(stages.RegisterQcMetricsToMetamist().required_stages_classes)
     assert reachable >= SWAP_CHECK_STAGES
-
-
-@pytest.mark.usefixtures('stage_init_without_workflow')
-def test_no_swap_check_stage_is_reachable_when_disabled():
-    reachable = reachable_stage_names(stages.register_required_stages(False))
-    assert reachable == {'RunMultiQc', 'CheckMultiQc'}
-
-
-@pytest.mark.usefixtures('stage_init_without_workflow')
-def test_register_stage_requires_the_stages_selected_by_the_config_switch():
-    register_stage = stages.RegisterQcMetricsToMetamist()
-    assert register_stage.required_stages_classes == stages.register_required_stages(stages.SWAP_CHECK_ENABLED)
 
 
 DEFAULT_CONFIG = Path(__file__).parent.parent / 'config' / 'single_sample_qc_popgen.toml'
@@ -390,6 +378,15 @@ def test_missing_enabled_key_fails_on_import(tmp_path):
 
     assert result.returncode != 0
     assert 'swap_check -> enabled' in result.stderr
+
+
+def test_quoted_enabled_value_fails_on_import(tmp_path):
+    # 'false' as a string is truthy and would silently enable the swap check.
+    default = DEFAULT_CONFIG.read_text()
+    result = import_stages_with_config(tmp_path, default.replace('enabled = true', "enabled = 'false'"))
+
+    assert result.returncode != 0
+    assert "workflow.swap_check.enabled must be a TOML boolean (true or false, unquoted); got 'false'" in result.stderr
 
 
 class FakeInputs:
@@ -439,15 +436,6 @@ def test_register_stage_skips_swap_check_input_when_disabled(monkeypatch):
     assert 'SwapCheckClassify' not in inputs.as_str_stages
 
 
-def test_register_stage_other_inputs_do_not_depend_on_the_switch(monkeypatch):
-    _, enabled_kwargs = queue_register_stage(monkeypatch, swap_check_enabled=True)
-    _, disabled_kwargs = queue_register_stage(monkeypatch, swap_check_enabled=False)
-
-    enabled_kwargs.pop('swap_check_path')
-    disabled_kwargs.pop('swap_check_path')
-    assert enabled_kwargs == disabled_kwargs
-
-
 # --- stage output versions ----------------------------------------------------
 
 
@@ -458,12 +446,15 @@ def fake_version_config(values: dict[tuple[str, ...], str]) -> Any:
     return fake
 
 
-def test_register_stage_defaults_to_v2(monkeypatch):
-    # v1 registrations predate the swap check; reusing them left swap_check out of metamist.
+def test_qc_stages_default_to_v2_and_swap_check_stages_to_v1(monkeypatch):
+    # v1 exome MultiQC JSONs lack target_bed_* metrics; v1 CheckMultiQc failures predate
+    # per-sequencing-type thresholds; v1 registrations predate the swap check.
     monkeypatch.setattr(stages, 'config_retrieve', fake_version_config({}))
 
+    assert stages.resolve_stage_version('RunMultiQc') == 'v2'
+    assert stages.resolve_stage_version('CheckMultiQc') == 'v2'
     assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v2'
-    assert stages.resolve_stage_version('RunMultiQc') == 'v1'
+    assert stages.resolve_stage_version('SwapCheckClassify') == 'v1'
 
 
 def test_workflow_version_overrides_stage_defaults(monkeypatch):

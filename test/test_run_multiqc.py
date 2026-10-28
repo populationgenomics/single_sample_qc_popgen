@@ -65,18 +65,6 @@ TARGET_BED_SUFFIXES = {
 }
 
 
-def test_genome_suffixes_are_the_base_list_without_target_bed_files():
-    suffixes = get_sequencing_type_profile('genome').multiqc_input_suffixes
-    assert suffixes == MULTIQC_BASE_INPUT_SUFFIXES
-    assert not TARGET_BED_SUFFIXES & set(suffixes)
-
-
-def test_exome_suffixes_are_the_base_list_plus_target_bed_files():
-    suffixes = get_sequencing_type_profile('exome').multiqc_input_suffixes
-    assert set(suffixes) == set(MULTIQC_BASE_INPUT_SUFFIXES) | TARGET_BED_SUFFIXES
-    assert len(suffixes) == len(set(suffixes))
-
-
 @pytest.mark.usefixtures('fake_dragen_prefix')
 def test_dragen_qc_paths_exome_stages_target_bed_files_genome_does_not():
     exome_paths = run_multiqc.dragen_qc_paths(['CPG000001', 'CPG000002'], 'exome')

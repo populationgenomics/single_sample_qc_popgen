@@ -12,7 +12,7 @@ from cpg_utils.config import config_retrieve, get_access_level
 from loguru import logger
 from metamist.graphql import gql, query
 
-from single_sample_qc_popgen.constants import OURDNA_CONTROL, get_sequencing_type_profile
+from single_sample_qc_popgen.constants import OURDNA_CONTROL, SEQUENCING_TYPE_PROFILES, get_sequencing_type_profile
 from single_sample_qc_popgen.utils import load_json
 
 REPORTED_SEX_QUERY = gql(
@@ -220,6 +220,12 @@ def update_sg_qc_metrics(
     ) -> dict[str, list[str]]:
     cohort_sgs: list[SequencingGroup] = cohort.get_sequencing_groups()
     meta_to_update = build_sg_multiqc_meta_dict(cohort_sgs, meta_to_update, sequencing_type)
+    # Metamist merges meta with JSON_MERGE_PATCH, where only null deletes a key. Null
+    # out coverage keys that belong to other sequencing types, so an SG re-registered
+    # under a different type does not keep the other type's values.
+    other_type_coverage_keys = {
+        metric.meta_key for profile in SEQUENCING_TYPE_PROFILES.values() for metric in profile.coverage_metrics
+    } - {metric.meta_key for metric in get_sequencing_type_profile(sequencing_type).coverage_metrics}
     if not failed_samples:
         logger.info('No failed samples detected for this cohort QC run.')
     else:
@@ -252,7 +258,7 @@ def update_sg_qc_metrics(
                 'project': metamist_project,
                 'sequencingGroup': {
                     'id': sg.id,
-                    'meta': sg_meta,
+                    'meta': {'qc': {**dict.fromkeys(other_type_coverage_keys), **sg_meta['qc']}},
                 },
             },
         )
@@ -298,11 +304,9 @@ def run(
         multiqc_data_path,
         extract_key='report_general_stats_data'
     )
-    failed_samples = load_json(failures_path, allow_missing=True) or {}
-    sex_imputation_by_sg = load_json(sex_imputation_path, allow_missing=True) or {}
-    swap_check_by_sg: dict[str, dict[str, Any]] = {}
-    if swap_check_path is not None:
-        swap_check_by_sg = load_json(swap_check_path, allow_missing=True) or {}
+    failed_samples = load_json(failures_path)
+    sex_imputation_by_sg = load_json(sex_imputation_path)
+    swap_check_by_sg = load_json(swap_check_path) if swap_check_path is not None else {}
 
     update_sg_qc_metrics(
         failed_samples=failed_samples,

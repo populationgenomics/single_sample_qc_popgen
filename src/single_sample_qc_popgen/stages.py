@@ -10,12 +10,12 @@ from cpg_flow.stage import (
 from cpg_flow.targets import Cohort
 
 if TYPE_CHECKING:
-    from cpg_flow.stage import StageDecorator
     from hailtop.batch.job import BashJob, PythonJob
 from cpg_flow.workflow import get_workflow
 from cpg_utils import Path
 from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, image_path, output_path
 from cpg_utils.hail_batch import get_batch
+from loguru import logger
 
 from single_sample_qc_popgen.constants import DRAGEN_VERSION
 from single_sample_qc_popgen.jobs import (
@@ -30,7 +30,11 @@ from single_sample_qc_popgen.utils import initialise_python_job
 
 # Read at import time because the @stage decorator fixes required_stages then.
 # No default: a missing key must fail loudly, not silently run or skip the swap check.
-SWAP_CHECK_ENABLED: bool = config_retrieve(['workflow', 'swap_check', 'enabled'])
+SWAP_CHECK_ENABLED = config_retrieve(['workflow', 'swap_check', 'enabled'])
+if not isinstance(SWAP_CHECK_ENABLED, bool):
+    raise TypeError(
+        f'workflow.swap_check.enabled must be a TOML boolean (true or false, unquoted); got {SWAP_CHECK_ENABLED!r}'
+    )
 
 
 def resolve_array_pgen_paths() -> tuple[str, str, str]:
@@ -57,19 +61,17 @@ def resolve_array_pgen_paths() -> tuple[str, str, str]:
     return derive_pgen_sibling_paths(query_array_pgen_path(rolling_aggregate_cohort_id))
 
 
-# cpg-flow reuses a stage whenever its expected output path exists, regardless of
-# whether its inputs changed. A stage whose inputs or outputs change must therefore
-# get a new default version here, or cohorts that already ran it keep the old result.
-#
-# RegisterQcMetricsToMetamist is v2 because the swap check became one of its inputs.
-# OurDNA cohorts registered before the swap check worked kept their v1
-# {cohort}_registered.json, so re-runs reused it and never wrote the new swap_check
-# into metamist: 13 cohorts, 846 COH15110 SGs (e.g. COH13800 registered 2026-06-29,
-# swap check 2026-08-18). v2 also covers the exome keys and the swap_check.enabled
-# switch, which change what registration writes.
+# cpg-flow reuses a stage whenever its expected outputs exist, even if its inputs changed:
+# bump a stage's default here when its inputs or outputs change. Why each stage is at its
+# current version: README, "Output versions and reuse".
 STAGE_DEFAULT_VERSIONS: dict[str, str] = {
+    'RunMultiQc': 'v2',
+    'CheckMultiQc': 'v2',
     'RegisterQcMetricsToMetamist': 'v2',
 }
+
+
+_LOGGED_STAGE_VERSIONS: set[str] = set()
 
 
 def resolve_stage_version(stage_name: str) -> str:
@@ -78,11 +80,16 @@ def resolve_stage_version(stage_name: str) -> str:
     Precedence: workflow.output_versions.<stage>, then workflow.version, then the
     stage's STAGE_DEFAULT_VERSIONS entry, then 'v1'. Explicit config always wins.
     """
-    return (
+    version = (
         config_retrieve(['workflow', 'output_versions', stage_name], None)
         or config_retrieve(['workflow', 'version'], None)
         or STAGE_DEFAULT_VERSIONS.get(stage_name, 'v1')
     )
+    # Logged once per stage so a reused older version is visible in the driver log.
+    if stage_name not in _LOGGED_STAGE_VERSIONS:
+        logger.info(f'{stage_name} output version: {version}')
+        _LOGGED_STAGE_VERSIONS.add(stage_name)
+    return version
 
 
 def get_output_prefix(cohort: Cohort, stage_name: str, category: str | None = None) -> Path:
@@ -403,22 +410,10 @@ class SwapCheckClassify(CohortStage):
         return self.make_outputs(target=cohort, data=output, jobs=j)  # pyright: ignore[reportArgumentType]
 
 
-# When the swap check is disabled, SwapCheckClassify drops out of the required
-# stages and the PrepareSampleSwap ... SwapCheckClassify chain leaves the graph:
-# run_workflow.py requests only the top-level stages and cpg-flow adds the rest
-# through required_stages. A selector function rather than a bare conditional so
-# tests can exercise both branches; the import-time constant reflects one config.
-
-
-def register_required_stages(swap_check_enabled: bool) -> list['StageDecorator']:
-    base = [RunMultiQc, CheckMultiQc]
-    return [*base, SwapCheckClassify] if swap_check_enabled else base
-
-
-_REGISTER_REQUIRED_STAGES = register_required_stages(SWAP_CHECK_ENABLED)
-
-
-@stage(required_stages=_REGISTER_REQUIRED_STAGES)
+# When the swap check is disabled, SwapCheckClassify and the four stages it requires
+# leave the graph: run_workflow.py requests only the top-level stages and cpg-flow adds
+# the rest through required_stages.
+@stage(required_stages=[RunMultiQc, CheckMultiQc, *([SwapCheckClassify] if SWAP_CHECK_ENABLED else [])])
 class RegisterQcMetricsToMetamist(CohortStage):
     """
     Registers QC metrics from MultiQC in the sequencing group 'meta' field in Metamist.

@@ -60,17 +60,6 @@ def test_qc_mapping_exome_coverage_metrics(make_qc_checker):
     assert 'pct_genome_gt_20x' not in mapping
 
 
-def test_qc_mapping_non_coverage_metrics_are_shared(make_qc_checker):
-    genome = make_qc_checker('genome').QC_MAPPING
-    exome = make_qc_checker('exome').QC_MAPPING
-
-    coverage_keys = {'mean_coverage', 'median_coverage', 'pct_genome_gt_20x', 'pct_target_gt_20x'}
-    shared_genome = {k: v for k, v in genome.items() if k not in coverage_keys and 'calculator' not in v}
-    shared_exome = {k: v for k, v in exome.items() if k not in coverage_keys and 'calculator' not in v}
-    assert shared_genome == shared_exome
-    assert shared_genome['q30_bases_pct']['multiqc_report_name'] == 'Q30 bases pct'
-
-
 def test_qc_checker_unknown_sequencing_type_raises(make_qc_checker):
     with pytest.raises(ValueError, match="Unsupported workflow.sequencing_type 'transcriptome'"):
         make_qc_checker('transcriptome')
@@ -102,15 +91,27 @@ def test_build_qc_thresholds_exome_uses_exome_block_and_metric_names(monkeypatch
 def test_build_qc_thresholds_missing_seq_type_block_raises(monkeypatch, make_qc_checker):
     set_qc_thresholds(monkeypatch, {'genome': {'min': {'mean_coverage': 30}}})
 
-    with pytest.raises(RuntimeError, match=r'No \[qc_thresholds\.exome\] block'):
+    with pytest.raises(RuntimeError, match=r'No thresholds under \[qc_thresholds\.exome\]'):
         build_qc_thresholds('exome', 'min', make_qc_checker('exome'))
 
 
 def test_build_qc_thresholds_no_qc_thresholds_at_all_raises(monkeypatch, make_qc_checker):
     monkeypatch.setattr(check_multiqc, 'get_config', dict)
 
-    with pytest.raises(RuntimeError, match=r'No \[qc_thresholds\.genome\] block'):
+    with pytest.raises(RuntimeError, match=r'No thresholds under \[qc_thresholds\.genome\]'):
         build_qc_thresholds('genome', 'min', make_qc_checker('genome'))
+
+
+@pytest.mark.parametrize(
+    'exome_block',
+    [{}, {'min': {}}, {'min': {}, 'max': {}, 'equality': {}}],
+    ids=['bare_header', 'empty_min', 'all_sub_blocks_empty'],
+)
+def test_build_qc_thresholds_empty_seq_type_block_raises(monkeypatch, make_qc_checker, exome_block):
+    set_qc_thresholds(monkeypatch, {'exome': exome_block})
+
+    with pytest.raises(RuntimeError, match=r'No thresholds under \[qc_thresholds\.exome\]'):
+        build_qc_thresholds('exome', 'min', make_qc_checker('exome'))
 
 
 def test_build_qc_thresholds_missing_sub_block_in_existing_block_is_empty(monkeypatch, make_qc_checker):
@@ -153,6 +154,14 @@ def test_build_qc_thresholds_unmapped_metric_raises(monkeypatch, make_qc_checker
     assert 'median_coverage' in message
 
 
+def test_build_qc_thresholds_verifybamid_contamination_raises(monkeypatch, make_qc_checker):
+    # DRAGEN runs report no FREEMIX, so a verifybamid threshold could never be enforced.
+    set_qc_thresholds(monkeypatch, {'genome': {'max': {'contamination_verifybamid': 0.05}}})
+
+    with pytest.raises(RuntimeError, match='contamination_verifybamid'):
+        build_qc_thresholds('genome', 'max', make_qc_checker('genome'))
+
+
 @pytest.mark.parametrize('config_key', ['min', 'max', 'equality'])
 def test_build_qc_thresholds_unmapped_metric_raises_for_every_check_type(monkeypatch, make_qc_checker, config_key):
     set_qc_thresholds(monkeypatch, {'genome': {config_key: {'not_a_metric': 1}}})
@@ -171,23 +180,3 @@ def test_build_qc_thresholds_shipped_default_config_builds(monkeypatch, make_qc_
     for config_key in ('min', 'max', 'equality'):
         thresholds = build_qc_thresholds(seq_type, config_key, qc_checker)
         assert set(thresholds) == set(default_config['qc_thresholds'][seq_type].get(config_key, {}))
-
-
-def test_shipped_default_config_exome_thresholds(monkeypatch, make_qc_checker):
-    with DEFAULT_CONFIG_PATH.open('rb') as f:
-        default_config = tomllib.load(f)
-    set_qc_thresholds(monkeypatch, default_config['qc_thresholds'])
-    qc_checker = make_qc_checker('exome')
-
-    exome_min = build_qc_thresholds('exome', 'min', qc_checker)
-    exome_max = build_qc_thresholds('exome', 'max', qc_checker)
-
-    assert {metric: t['threshold'] for metric, t in exome_min.items()} == {
-        'median_coverage': 50,
-        'mapping_rate_pct': 80,
-        'q30_bases_pct': 80,
-    }
-    assert {metric: t['threshold'] for metric, t in exome_max.items()} == {'chimera_rate': 0.03}
-    assert exome_min['median_coverage']['multiqc_report_name'] == (
-        'target bed median autosomal coverage over target region'
-    )

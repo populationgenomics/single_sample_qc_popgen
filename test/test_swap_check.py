@@ -377,7 +377,7 @@ def test_missing_enabled_key_fails_on_import(tmp_path):
     result = import_stages_with_config(tmp_path, default.replace('enabled = true\n', ''))
 
     assert result.returncode != 0
-    assert 'swap_check -> enabled' in result.stderr
+    assert 'workflow.swap_check.enabled is not set; set it to true' in result.stderr
 
 
 def test_quoted_enabled_value_fails_on_import(tmp_path):

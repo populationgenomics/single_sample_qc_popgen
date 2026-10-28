@@ -4,7 +4,7 @@ from typing import Any
 import cpg_utils
 from cloudpathlib.exceptions import CloudPathFileNotFoundError
 from cpg_flow.targets import Cohort, SequencingGroup
-from cpg_utils.config import get_driver_image, output_path
+from cpg_utils.config import config_retrieve, get_driver_image, output_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import PythonJob
 from loguru import logger
@@ -26,6 +26,23 @@ def initialise_python_job(
     )
     py_job.image(get_driver_image())
     return py_job
+
+
+def get_cohort_sequencing_type(cohort: Cohort) -> str:
+    """workflow.sequencing_type, checked against every SG's type in metamist.
+
+    Raises:
+        ValueError: If any SG in the cohort has a different sequencing type.
+    """
+    sequencing_type = config_retrieve(['workflow', 'sequencing_type'])
+    mismatched = sorted(
+        f'{sg.id} ({sg.sequencing_type})'
+        for sg in cohort.get_sequencing_groups()
+        if sg.sequencing_type != sequencing_type
+    )
+    if mismatched:
+        raise ValueError(f'workflow.sequencing_type is {sequencing_type!r} but these SGs differ: {mismatched}')
+    return sequencing_type
 
 
 def get_dragen_output_path(filename: str, category: str | None = None) -> cpg_utils.Path:

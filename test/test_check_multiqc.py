@@ -8,8 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from single_sample_qc_popgen.constants import get_sequencing_type_profile
 from single_sample_qc_popgen.jobs import check_multiqc
-from single_sample_qc_popgen.jobs.check_multiqc import QCChecker, build_qc_thresholds
+from single_sample_qc_popgen.jobs.check_multiqc import QCChecker, build_qc_thresholds, check_threshold_metrics_in_report
 
 EXOME_PCT_TARGET_GT_20X_THRESHOLD = 0.95
 GENOME_MEDIAN_COVERAGE_THRESHOLD = 25
@@ -180,3 +181,25 @@ def test_build_qc_thresholds_shipped_default_config_builds(monkeypatch, make_qc_
     for config_key in ('min', 'max', 'equality'):
         thresholds = build_qc_thresholds(seq_type, config_key, qc_checker)
         assert set(thresholds) == set(default_config['qc_thresholds'][seq_type].get(config_key, {}))
+
+
+# --- check_threshold_metrics_in_report ----------------------------------
+
+
+GENOME_ONLY_STATS = {'DRAGEN': {'CPG000001': {get_sequencing_type_profile('genome').median_coverage.multiqc_name: 2.6}}}
+
+
+def test_check_threshold_metrics_in_report_raises_when_metric_in_no_section(monkeypatch, make_qc_checker):
+    set_qc_thresholds(monkeypatch, {'exome': {'min': {'median_coverage': EXOME_MEDIAN_COVERAGE_THRESHOLD}}})
+    threshold_map = build_qc_thresholds('exome', 'min', make_qc_checker('exome'))
+
+    with pytest.raises(RuntimeError, match='target bed median autosomal coverage over target region'):
+        check_threshold_metrics_in_report(threshold_map, GENOME_ONLY_STATS)
+
+
+def test_check_threshold_metrics_in_report_passes_when_only_some_samples_lack_metric(monkeypatch, make_qc_checker):
+    set_qc_thresholds(monkeypatch, {'genome': {'min': {'median_coverage': GENOME_MEDIAN_COVERAGE_THRESHOLD}}})
+    threshold_map = build_qc_thresholds('genome', 'min', make_qc_checker('genome'))
+    stats = {'DRAGEN': {**GENOME_ONLY_STATS['DRAGEN'], 'CPG000002': {}}}
+
+    check_threshold_metrics_in_report(threshold_map, stats)

@@ -8,13 +8,13 @@ from collections.abc import Sequence
 
 from cpg_flow.targets import Cohort
 from cpg_utils import Path
-from cpg_utils.config import config_retrieve, image_path
+from cpg_utils.config import image_path
 from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
 
 from single_sample_qc_popgen.constants import get_sequencing_type_profile
-from single_sample_qc_popgen.utils import get_dragen_output_path, get_qc_path
+from single_sample_qc_popgen.utils import get_cohort_sequencing_type, get_dragen_output_path, get_qc_path
 
 
 def dragen_qc_paths(sg_names: Sequence[str], sequencing_type: str) -> list[Path]:
@@ -57,7 +57,7 @@ def run_multiqc(
     """Creates the batch job that runs MultiQC on the per-SG DRAGEN QC files."""
     qc_file_paths = dragen_qc_paths(
         [sg.name for sg in cohort.get_sequencing_groups()],
-        config_retrieve(['workflow', 'sequencing_type']),
+        get_cohort_sequencing_type(cohort),
     )
     logger.info(f'Staging {len(qc_file_paths)} QC files for MultiQC aggregation.')
 

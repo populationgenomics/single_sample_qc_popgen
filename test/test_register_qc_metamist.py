@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from single_sample_qc_popgen import utils
 from single_sample_qc_popgen.jobs import register_qc_metamist
 from single_sample_qc_popgen.jobs.register_qc_metamist import (
     build_sg_multiqc_meta_dict,
@@ -264,10 +265,11 @@ def run_register(
     monkeypatch.setattr(register_qc_metamist, 'load_json', fake_load_json)
     monkeypatch.setattr(register_qc_metamist, 'query', fake_query)
     monkeypatch.setattr(register_qc_metamist, 'config_retrieve', fake_config)
+    monkeypatch.setattr(utils, 'config_retrieve', fake_config)
     monkeypatch.setattr(register_qc_metamist, 'get_access_level', lambda: 'test')
 
     cohort = SimpleNamespace(
-        get_sequencing_groups=lambda: [SimpleNamespace(id='CPG000001')],
+        get_sequencing_groups=lambda: [SimpleNamespace(id='CPG000001', sequencing_type=sequencing_type)],
         dataset=SimpleNamespace(name='project'),
     )
     output = tmp_path / 'registered.json'
@@ -284,11 +286,13 @@ def run_register(
     return sent_meta
 
 
-def test_run_omits_swap_check_key_when_no_path_given(monkeypatch, tmp_path):
+def test_run_sends_null_swap_check_when_no_path_given(monkeypatch, tmp_path):
     sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=None)
 
     qc = sent_meta['CPG000001']['qc']
-    assert 'swap_check' not in qc
+    assert 'swap_check' in qc
+    assert qc['swap_check'] is None
+    assert 'swap_check' not in json.loads((tmp_path / 'registered.json').read_text())['CPG000001']
     assert qc['f_stat_raw'] == F_STAT_RAW
     assert qc['qc_checks_failed'] == []
 
@@ -327,7 +331,7 @@ def test_run_registers_exome_coverage_under_exome_keys(monkeypatch, tmp_path):
 )
 def test_run_sends_null_for_other_type_coverage_keys(monkeypatch, tmp_path, sequencing_type, other_type_key):
     # Metamist merges meta with JSON_MERGE_PATCH; null is the only way to delete a stale key.
-    sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=None, sequencing_type=sequencing_type)
+    sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=SWAP_CHECK_PATH, sequencing_type=sequencing_type)
 
     qc = sent_meta['CPG000001']['qc']
     assert other_type_key in qc

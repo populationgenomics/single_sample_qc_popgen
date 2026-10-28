@@ -13,7 +13,7 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import OURDNA_CONTROL, SEQUENCING_TYPE_PROFILES, get_sequencing_type_profile
-from single_sample_qc_popgen.utils import load_json
+from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -213,7 +213,7 @@ def update_sg_qc_metrics(
         failed_samples: dict[str, list[str]],
         meta_to_update: dict[str, Any],
         sex_imputation_by_sg: dict[str, dict[str, Any]],
-        swap_check_by_sg: dict[str, dict[str, Any]],
+        swap_check_by_sg: dict[str, dict[str, Any]] | None,
         cohort: Cohort,
         output: cpg_utils.Path,
         sequencing_type: str,
@@ -226,6 +226,10 @@ def update_sg_qc_metrics(
     other_type_coverage_keys = {
         metric.meta_key for profile in SEQUENCING_TYPE_PROFILES.values() for metric in profile.coverage_metrics
     } - {metric.meta_key for metric in get_sequencing_type_profile(sequencing_type).coverage_metrics}
+    null_keys = set(other_type_coverage_keys)
+    if swap_check_by_sg is None:
+        # Swap check disabled: delete any result left by an earlier enabled run.
+        null_keys.add('swap_check')
     if not failed_samples:
         logger.info('No failed samples detected for this cohort QC run.')
     else:
@@ -245,10 +249,11 @@ def update_sg_qc_metrics(
         # / best_relatedness / n_sites_compared. swap_detected is a
         # labelling problem and is intentionally NOT wired into
         # qc_checks_failed or deactivate_sgs.
-        if sg.id in swap_check_by_sg:
+        if swap_check_by_sg and sg.id in swap_check_by_sg:
             sg_meta['qc']['swap_check'] = swap_check_by_sg[sg.id]
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
-        logger.info(f'Updating SG {sg.id} with meta: {sg_meta}')
+        meta_to_send = {'qc': {**dict.fromkeys(null_keys), **sg_meta['qc']}}
+        logger.info(f'Updating SG {sg.id} with meta: {meta_to_send}')
         metamist_project = cohort.dataset.name
         if get_access_level() == 'test':
             metamist_project += '-test'
@@ -258,7 +263,7 @@ def update_sg_qc_metrics(
                 'project': metamist_project,
                 'sequencingGroup': {
                     'id': sg.id,
-                    'meta': {'qc': {**dict.fromkeys(other_type_coverage_keys), **sg_meta['qc']}},
+                    'meta': meta_to_send,
                 },
             },
         )
@@ -297,7 +302,8 @@ def run(
 
     Args:
         swap_check_path: The swap-check JSON, or None when workflow.swap_check.enabled
-            is false, in which case no 'swap_check' key is registered.
+            is false, in which case 'swap_check' is sent as null, deleting any
+            result an earlier enabled run registered.
     """
 
     multiqc_data = load_json(
@@ -306,7 +312,7 @@ def run(
     )
     failed_samples = load_json(failures_path)
     sex_imputation_by_sg = load_json(sex_imputation_path)
-    swap_check_by_sg = load_json(swap_check_path) if swap_check_path is not None else {}
+    swap_check_by_sg = load_json(swap_check_path) if swap_check_path is not None else None
 
     update_sg_qc_metrics(
         failed_samples=failed_samples,
@@ -315,5 +321,5 @@ def run(
         swap_check_by_sg=swap_check_by_sg,
         cohort=cohort,
         output=output,
-        sequencing_type=config_retrieve(['workflow', 'sequencing_type']),
+        sequencing_type=get_cohort_sequencing_type(cohort),
     )

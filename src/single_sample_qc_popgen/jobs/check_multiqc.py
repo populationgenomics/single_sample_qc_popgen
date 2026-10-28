@@ -22,7 +22,7 @@ from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL, get_sequencing_type_profile
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
-from single_sample_qc_popgen.utils import load_json
+from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -297,6 +297,25 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
         }
     return qc_thresholds
 
+def check_threshold_metrics_in_report(threshold_map: dict[str, dict[str, Any]], multiqc_data: dict) -> None:
+    """Raises RuntimeError if a thresholded metric is in no general-stats section.
+
+    A metric absent from the whole report means the wrong report or profile,
+    not a sample lacking a value, and its threshold would never be applied.
+    Calculated metrics without a multiqc_report_name are not checked.
+    """
+    missing = sorted(
+        name
+        for metric_config in threshold_map.values()
+        if (name := metric_config.get('multiqc_report_name'))
+        and not any(name in val_by_metric for section in multiqc_data.values() for val_by_metric in section.values())
+    )
+    if missing:
+        raise RuntimeError(
+            f'Thresholded metrics missing from every MultiQC general-stats section: {missing}. '
+            f'Sections present: {list(multiqc_data)}'
+        )
+
 def get_metric_value(
         qc_checker: QCChecker,
         metric_config: dict,
@@ -437,7 +456,7 @@ def run(
             multiqc_data_path,
             extract_key='report_general_stats_data'
         )
-    seq_type = get_config()['workflow']['sequencing_type']
+    seq_type = get_cohort_sequencing_type(cohort)
     qc_checker = QCChecker(cohort, multiqc_data, seq_type)
 
     # Run checks
@@ -450,6 +469,7 @@ def run(
     for check_type, fail_sign, good_sign, is_fail in check_definitions:
         # 1. Build thresholds for this check type (min, max, or equality)
         threshold_map = build_qc_thresholds(seq_type, check_type, qc_checker)
+        check_threshold_metrics_in_report(threshold_map, qc_checker.multiqc_data)
 
         # 2. Iterate through MultiQC data sections
         for section_data in qc_checker.multiqc_data.values():

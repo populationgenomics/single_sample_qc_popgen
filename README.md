@@ -103,7 +103,7 @@ The pipeline selects MultiQC inputs and coverage metric names from `workflow.seq
 
 Five stages (`PrepareSampleSwap`, `SwapCheckExportVcf`, `SwapCheckSomalierExtract`, `SwapCheckSomalierRelate`, `SwapCheckClassify`) compare each WGS somalier sketch against the sketches of a genotyping-array cohort to detect sample swaps. Their result is registered under `sg.meta['qc']['swap_check']` by `RegisterQcMetricsToMetamist`. This needs `workflow.swap_check.rolling_aggregate_cohort_id` and an `array_aggregate_pgen` analysis registered against that cohort.
 
-`workflow.swap_check.enabled` switches the check. It has no default: every run config must set it, and the pipeline errors on import if it is missing. Cohorts with arrays set `enabled = true`; cohorts without arrays set `enabled = false`. `RegisterQcMetricsToMetamist` then no longer requires `SwapCheckClassify`, so none of the five stages are in the workflow, and no `swap_check` key is written to `sg.meta['qc']`. With `enabled = true` behaviour is unchanged.
+`workflow.swap_check.enabled` switches the check. It has no default: every run config must set it, and the pipeline errors on import if it is missing. Cohorts with arrays set `enabled = true`; cohorts without arrays set `enabled = false`. `RegisterQcMetricsToMetamist` then no longer requires `SwapCheckClassify`, so none of the five stages are in the workflow, and `swap_check` is deleted from `sg.meta['qc']`, including any result from an earlier run with `enabled = true`. With `enabled = true` behaviour is unchanged.
 
 ## Output versions and reuse
 

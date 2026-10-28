@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from hailtop.batch.job import BashJob, PythonJob
 from cpg_flow.workflow import get_workflow
 from cpg_utils import Path
-from cpg_utils.config import config_retrieve, get_access_level, get_driver_image, image_path, output_path
+from cpg_utils.config import ConfigError, config_retrieve, get_access_level, get_driver_image, image_path, output_path
 from cpg_utils.hail_batch import get_batch
 from loguru import logger
 
@@ -30,7 +30,13 @@ from single_sample_qc_popgen.utils import initialise_python_job
 
 # Read at import time because the @stage decorator fixes required_stages then.
 # No default: a missing key must fail loudly, not silently run or skip the swap check.
-SWAP_CHECK_ENABLED = config_retrieve(['workflow', 'swap_check', 'enabled'])
+try:
+    SWAP_CHECK_ENABLED = config_retrieve(['workflow', 'swap_check', 'enabled'])
+except ConfigError as e:
+    raise ConfigError(
+        'workflow.swap_check.enabled is not set; set it to true (cohort has genotyping arrays) '
+        'or false (no arrays). See README "Sample-swap check".'
+    ) from e
 if not isinstance(SWAP_CHECK_ENABLED, bool):
     raise TypeError(
         f'workflow.swap_check.enabled must be a TOML boolean (true or false, unquoted); got {SWAP_CHECK_ENABLED!r}'

@@ -4,9 +4,9 @@ This pipeline performs sample quality-control (QC) on single-sample sequencing d
 
 The metrics used for sample hard filters are adapted from the All Of Us Research Program (AoURP) QC thresholds. The metrics can be found in the [supplementary materials of the AoURP publication](https://www.nature.com/articles/s41586-023-06957-x#Sec32) (accompanying Word document [here](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-023-06957-x/MediaObjects/41586_2023_6957_MOESM1_ESM.docx)), as well as below.
 
-The pipeline reads the `dragen_metrics` output of the `dragen_align_pa` pipeline. An explicit list of per-sequencing-group DRAGEN CSVs (`MULTIQC_BASE_INPUT_SUFFIXES` in `constants.py`, plus four `target_bed_*` files for exomes) is provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering.
+The pipeline reads the `dragen_metrics` output of the `dragen_align_pa` pipeline. An explicit list of per-sequencing-group DRAGEN CSVs (the required and report-only suffixes of each profile in `SEQUENCING_TYPE_PROFILES` in `constants.py`) is provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering.
 
-Files are listed explicitly rather than discovered by glob because `dragen_metrics/<SG>/` mixes two layout vintages, and the nested duplicates in the older layout overwrite the top-level files when staged into MultiQC's flat input directory (see `docs/dragen-output-schema.md`). A listed file missing from GCS fails the MultiQC job with an error naming the object. The list excludes:
+Files are listed explicitly rather than discovered by glob because `dragen_metrics/<SG>/` mixes two layout vintages, and the nested duplicates in the older layout overwrite the top-level files when staged into MultiQC's flat input directory (see `docs/dragen-output-schema.md`). The listed files fall into two tiers per sequencing type. A required file feeds a QC threshold, a registered metric or the chimera and ploidy calculators; if one is missing from GCS the MultiQC job fails with an error naming the object. A report-only file feeds only MultiQC plots and tables; if one is missing the job logs the file name and a count and carries on, so that sequencing group lacks those plot entries but is otherwise QC'd as normal. The lists exclude:
 
 * files MultiQC does not parse (`cnv_metrics`, `sv_metrics`, `roh_metrics`, `wgs_hist`, and the per-region histogram/contig files);
 * time metrics CSVs, which record run provenance rather than sample QC. The `<SG>.dragen.time_metrics.csv` file present in newer outputs would also add a spurious `<SG>.dragen` sample to the report.
@@ -37,7 +37,7 @@ The workflow performs the following steps:
 ## Prerequisites
 
 1. **Metamist Cohort**: The pipeline requires a Metamist cohort with sequencing groups corresponding to the samples to be QCed. Ensure that the cohort is properly set up and accessible.
-2. **Configuration File**: A configuration file (TOML format) specifying the QC metrics thresholds, Slack notification settings, and other parameters is required. A template configuration file is provided at `config/single_sample_qc_popgen.toml`. It is a reference copy, not a default: it is not in the image and is not layered under run configs, so each run config must carry every setting it needs, including `workflow.swap_check.enabled` and a `[qc_thresholds.<sequencing_type>]` block.
+2. **Configuration File**: A configuration file (TOML format) specifying the QC metrics thresholds, Slack notification settings, and other parameters is required. Production runs layer `config/single_sample_qc_popgen/defaults.toml` from the `production-pipelines-configuration` repo under a thin cohort config, by passing repeated `--config` flags to `analysis-runner` (merged left to right; see [How to Run](#how-to-run-the-pipeline)). A template configuration file is also provided at `config/single_sample_qc_popgen.toml` in this repo. It is a reference copy of the settings, not a default: it is not in the image and is not layered automatically. The merged configuration must carry every setting the pipeline needs, including `workflow.swap_check.enabled` and a `[qc_thresholds.<sequencing_type>]` block.
 
 
 ## Configuration
@@ -90,7 +90,8 @@ The pipeline selects MultiQC inputs and coverage metric names from `workflow.seq
 
 | | `genome` | `exome` |
 |---|---|---|
-| MultiQC inputs | `MULTIQC_BASE_INPUT_SUFFIXES` | base list plus `target_bed_{coverage_metrics,overall_mean_cov,contig_mean_cov,fine_hist}.csv` |
+| Required MultiQC inputs (`<SG>.<name>.csv`) | `mapping_metrics`, `vc_metrics`, `ploidy_estimation_metrics`, `fastqc_metrics`, `wgs_coverage_metrics` | `mapping_metrics`, `vc_metrics`, `ploidy_estimation_metrics`, `fastqc_metrics`, `target_bed_coverage_metrics` |
+| Report-only MultiQC inputs (`<SG>.<name>.csv`) | `fragment_length_hist`, `trimmer_metrics`, `wgs_{contig_mean_cov,fine_hist,overall_mean_cov}`, `qc-coverage-region-{1,2}_{coverage_metrics,overall_mean_cov}` | the genome report-only files plus `wgs_coverage_metrics` and `target_bed_{contig_mean_cov,fine_hist,overall_mean_cov}` |
 | Mean coverage (`mean_coverage`) | `Average sequenced coverage over genome` | `Average sequenced coverage over target region` |
 | Median coverage (`median_coverage`) | `wgs median autosomal coverage over genome` | `target bed median autosomal coverage over target region` |
 | Fraction at ≥20x coverage | `pct_genome_gt_20x` from `wgs pct of genome with coverage [20x:inf)` | `pct_target_gt_20x` from `target bed pct of target region with coverage [20x:inf)` |
@@ -125,6 +126,7 @@ The pipeline is launched using `analysis-runner`.
 analysis-runner \
 --dataset <your-dataset> \
 --access test \
+--config <path/to/production-pipelines-configuration>/config/single_sample_qc_popgen/defaults.toml \
 --config <path/to/your-config.toml> \
 --output-dir '' \
 --description "DRAGEN QC checks for <your-cohort>" \
@@ -133,7 +135,7 @@ single_sample_qc_popgen
 ```
 
   * `--dataset`: The Metamist dataset associated with your cohort.
-  * `--config`: The path to your local TOML configuration file.
+  * `--config`: A path to a TOML configuration file. Repeat the flag to layer files; they are merged left to right, so later files override earlier ones. Pass the production defaults first and your thin cohort config last.
   * `--output-dir`: This is required by `analysis-runner` but is not used by this pipeline. You can leave it as `''`.
   * `--image`: The full path to the pipeline's Docker image. The example uses a `-dev` image, but production runs will use a production (i.e. no `-dev` image)
 

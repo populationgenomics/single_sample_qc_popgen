@@ -178,32 +178,32 @@ def resolve_metric_sections(general_stats: dict[str, Any], metric_keys: list[str
 def build_sg_multiqc_meta_dict(
     cohort_sgs: list[SequencingGroup], multiqc_json: dict[str, Any], sequencing_type: str
 ) -> dict[str, dict]:
-    """
-    Build a dictionary mapping sequencing group IDs to their MultiQC metrics.
+    """Build a dictionary mapping sequencing group IDs to their MultiQC metrics.
+
+    Raises:
+        ValueError: If any SG is missing from a section holding a registered
+            metric. Its metrics would be sent as null, deleting its earlier
+            values in metamist.
     """
     metrics = metric_map(sequencing_type)
     section_by_metric = resolve_metric_sections(multiqc_json, [metric_key for _, metric_key in metrics])
+    missing = sorted(
+        sg.id
+        for sg in cohort_sgs
+        if any(sg.id not in multiqc_json[section_key] for section_key in set(section_by_metric.values()))
+    )
+    if missing:
+        raise ValueError(
+            f'SGs missing from the MultiQC report, so their QC would be deleted in metamist: {missing}'
+        )
 
     extracted_data = {}
 
     for sg in cohort_sgs:
         sample_metrics: dict[str, Any] = {}
-        missing_sections_for_this_sample = set()
-
         for out_key, metric_key in metrics:
-            section_key = section_by_metric[metric_key]
-            val_by_metric = multiqc_json[section_key].get(sg.id)
-
-            if val_by_metric is None:
-                sample_metrics[out_key] = None
-                # Only log if we haven't complained about this specific section for this sample yet
-                if section_key not in missing_sections_for_this_sample:
-                    logger.warning(f"⚠️ Sequencing Group '{sg.id}' missing from MultiQC section: '{section_key}'")
-                    missing_sections_for_this_sample.add(section_key)
-                continue
-
             # Use None if the metric is missing for this sample
-            sample_metrics[out_key] = val_by_metric.get(metric_key)
+            sample_metrics[out_key] = multiqc_json[section_by_metric[metric_key]][sg.id].get(metric_key)
 
         extracted_data[sg.id] = sample_metrics
 

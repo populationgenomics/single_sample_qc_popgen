@@ -119,18 +119,34 @@ def test_resolve_metric_sections_ambiguous_metric_raises():
         resolve_metric_sections(general_stats, ['Ploidy estimation'])
 
 
-def test_build_sg_multiqc_meta_dict_extracts_values_and_nones_missing_sgs():
+def test_build_sg_multiqc_meta_dict_extracts_values():
     general_stats = make_general_stats(['CPG000001'])
-    sgs = [SimpleNamespace(id='CPG000001'), SimpleNamespace(id='CPG000002')]
+    sgs = [SimpleNamespace(id='CPG000001')]
 
     extracted = build_sg_multiqc_meta_dict(sgs, general_stats, 'genome')  # pyright: ignore[reportArgumentType]
 
+    assert set(extracted['CPG000001']) == {meta_key for meta_key, _ in metric_map('genome')}
     assert extracted['CPG000001']['contamination_dragen'] == CONTAMINATION
     assert extracted['CPG000001']['ploidy_estimation'] == 'XY'
     assert extracted['CPG000001']['avg_gc_content'] == AVG_GC_CONTENT
-    # CPG000002 is absent from every section: every metric is None, not an error.
-    assert set(extracted['CPG000002']) == {meta_key for meta_key, _ in metric_map('genome')}
-    assert all(value is None for value in extracted['CPG000002'].values())
+
+
+def test_build_sg_multiqc_meta_dict_raises_for_sg_missing_from_report():
+    # Sending null for every metric of an absent SG would delete its earlier QC in metamist.
+    general_stats = make_general_stats(['CPG000001'])
+    sgs = [SimpleNamespace(id='CPG000001'), SimpleNamespace(id='CPG000002')]
+
+    with pytest.raises(ValueError, match=r"missing from the MultiQC report.*\['CPG000002'\]"):
+        build_sg_multiqc_meta_dict(sgs, general_stats, 'genome')  # pyright: ignore[reportArgumentType]
+
+
+def test_build_sg_multiqc_meta_dict_raises_for_sg_missing_from_one_section():
+    general_stats = make_general_stats(['CPG000001', 'CPG000002'])
+    del next(iter(general_stats.values()))['CPG000002']
+    sgs = [SimpleNamespace(id='CPG000001'), SimpleNamespace(id='CPG000002')]
+
+    with pytest.raises(ValueError, match=r"\['CPG000002'\]"):
+        build_sg_multiqc_meta_dict(sgs, general_stats, 'genome')  # pyright: ignore[reportArgumentType]
 
 
 def test_build_sg_multiqc_meta_dict_nones_metric_missing_for_one_sg():

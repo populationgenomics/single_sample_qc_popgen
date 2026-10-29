@@ -8,17 +8,29 @@ DRAGEN_VERSION: Final = config_retrieve(['ica', 'pipelines', 'dragen_version'])
 # OurDNA controls carry this prefix in their sample external ID (e.g. NA12878-...).
 OURDNA_CONTROL: Final = 'NA12878'
 
-# DRAGEN per-SG CSV outputs that MultiQC parses for every sequencing type,
-# staged by RunMultiQc as f'{sg_name}.{suffix}'. See the README and
+# DRAGEN per-SG CSV outputs that MultiQC parses, staged by RunMultiQc as
+# f'{sg_name}.{suffix}'. They fall into two tiers per sequencing type (see
+# SequencingTypeProfile): required files fail the MultiQC job when missing,
+# report-only files are logged and skipped. See the README and
 # docs/dragen-output-schema.md for what is excluded and why.
-MULTIQC_BASE_INPUT_SUFFIXES: Final = (
+#
+# Required for every sequencing type: each file feeds a QC threshold, a
+# registered metric (register_qc_metamist.metric_map) or the chimera/ploidy
+# calculators. mapping_metrics.csv carries contamination, Q30, mapping rate,
+# duplicates, insert size, chimeric alignments and the mean coverage rows for
+# both genome and target region.
+_SHARED_REQUIRED_INPUT_SUFFIXES: Final = (
     'mapping_metrics.csv',
     'vc_metrics.csv',
     'ploidy_estimation_metrics.csv',
     'fastqc_metrics.csv',
+)
+
+# Report-only for every sequencing type: these files only feed MultiQC plots
+# and tables, no threshold, registered metric or calculator reads them.
+_SHARED_REPORT_ONLY_INPUT_SUFFIXES: Final = (
     'fragment_length_hist.csv',
     'trimmer_metrics.csv',
-    'wgs_coverage_metrics.csv',
     'wgs_contig_mean_cov.csv',
     'wgs_fine_hist.csv',
     'wgs_overall_mean_cov.csv',
@@ -46,9 +58,21 @@ class CoverageMetric:
 
 @dataclass(frozen=True)
 class SequencingTypeProfile:
-    """Everything that differs between sequencing types in MultiQC input and metric names."""
+    """Everything that differs between sequencing types in MultiQC input and metric names.
 
-    multiqc_input_suffixes: tuple[str, ...]
+    Attributes:
+        required_input_suffixes: DRAGEN CSV suffixes that feed a QC threshold,
+            a registered metric or a calculator. A missing file fails the
+            MultiQC job.
+        report_only_input_suffixes: DRAGEN CSV suffixes that only feed MultiQC
+            plots and tables. A missing file is logged and skipped.
+        mean_coverage: Mean coverage metric.
+        median_coverage: Median coverage metric.
+        pct_gt_20x: Fraction of the genome or target region at 20x or more.
+    """
+
+    required_input_suffixes: tuple[str, ...]
+    report_only_input_suffixes: tuple[str, ...]
     mean_coverage: CoverageMetric
     median_coverage: CoverageMetric
     pct_gt_20x: CoverageMetric
@@ -58,21 +82,13 @@ class SequencingTypeProfile:
         return (self.mean_coverage, self.median_coverage, self.pct_gt_20x)
 
 
-# Exome DRAGEN outputs add target-bed coverage files alongside the wgs_* and
-# qc-coverage-region-* files in the base list; the exome coverage metrics
-# below come from the target_bed_* files.
-_EXOME_EXTRA_MULTIQC_INPUT_SUFFIXES: Final = (
-    'target_bed_coverage_metrics.csv',
-    'target_bed_overall_mean_cov.csv',
-    'target_bed_contig_mean_cov.csv',
-    'target_bed_fine_hist.csv',
-)
-
 # The exome meta key is pct_target_gt_20x, not pct_genome_gt_20x: the
 # denominator is the target region, not the genome.
 SEQUENCING_TYPE_PROFILES: Final = {
     'genome': SequencingTypeProfile(
-        multiqc_input_suffixes=MULTIQC_BASE_INPUT_SUFFIXES,
+        # wgs_coverage_metrics.csv: median coverage and pct genome >= 20x.
+        required_input_suffixes=(*_SHARED_REQUIRED_INPUT_SUFFIXES, 'wgs_coverage_metrics.csv'),
+        report_only_input_suffixes=_SHARED_REPORT_ONLY_INPUT_SUFFIXES,
         mean_coverage=CoverageMetric('mean_coverage', 'Average sequenced coverage over genome', 'Mean Coverage'),
         median_coverage=CoverageMetric(
             'median_coverage', 'wgs median autosomal coverage over genome', 'Median Coverage'
@@ -82,7 +98,17 @@ SEQUENCING_TYPE_PROFILES: Final = {
         ),
     ),
     'exome': SequencingTypeProfile(
-        multiqc_input_suffixes=MULTIQC_BASE_INPUT_SUFFIXES + _EXOME_EXTRA_MULTIQC_INPUT_SUFFIXES,
+        # target_bed_coverage_metrics.csv: median coverage and pct target >= 20x.
+        required_input_suffixes=(*_SHARED_REQUIRED_INPUT_SUFFIXES, 'target_bed_coverage_metrics.csv'),
+        # Exome DRAGEN outputs also carry the wgs_coverage_metrics.csv
+        # genome-wide values, which are not registered for exomes.
+        report_only_input_suffixes=(
+            *_SHARED_REPORT_ONLY_INPUT_SUFFIXES,
+            'wgs_coverage_metrics.csv',
+            'target_bed_contig_mean_cov.csv',
+            'target_bed_fine_hist.csv',
+            'target_bed_overall_mean_cov.csv',
+        ),
         mean_coverage=CoverageMetric(
             'mean_coverage', 'Average sequenced coverage over target region', 'Mean Coverage'
         ),

@@ -14,11 +14,12 @@ only the last-copied file survived to be parsed by MultiQC. Rows marked below
 as "collides" were affected; see the "Collision impact" note at the end.
 
 `run_multiqc.py` now stages an explicit list of top-level per-SG files
-(`MULTIQC_BASE_INPUT_SUFFIXES` in `constants.py`, plus the `target_bed_*` files
-for exomes) instead of globbing, so the nested duplicates are never staged and
-reports built after that change carry the correct top-level values for both
-vintages. Reports and metamist QC metrics produced before the change are
-affected as described under "Collision impact".
+(the required and report-only suffixes of each profile in
+`SEQUENCING_TYPE_PROFILES` in `constants.py`) instead of globbing, so the
+nested duplicates are never staged and reports built after that change carry
+the correct top-level values for both vintages. Reports and metamist QC
+metrics produced before the change are affected as described under "Collision
+impact".
 
 ## OurDNA Filipino pilot layout
 

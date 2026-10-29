@@ -29,17 +29,35 @@ chimera_rate = 0.03
 [qc_thresholds.genome.equality]
 ploidy_estimation = true
 
+# median_coverage is the on-target (target bed) median autosomal coverage.
+# pct_target_gt_20x, contamination_dragen and ploidy_estimation are not set for
+# exomes yet: they need a calibration pass across both mackenzie capture designs
+# (twist-vcgs, CREv2) and sequencing sites first.
+[qc_thresholds.exome.min]
+median_coverage = 50
+mapping_rate_pct = 80
+q30_bases_pct = 80
+
+[qc_thresholds.exome.max]
+chimera_rate = 0.03
+
 # Sex-karyotype derivation (LoY rescue, raw-f-stat ambiguous gate) lives
 # downstream in ourdna_genomic_atlas, alongside the ancestry-aware f-stat
 # renormalisation that shares the same raw signals. This repo emits raw
 # somalier signals (f_stat_raw, x_het_rate, y_calls, …) only.
 
 [workflow.swap_check]
+# Runs the five swap-check stages (WGS vs genotyping array fingerprints). Cohorts
+# without arrays set this to false in their run config: the swap-check stages
+# then leave the workflow and no 'swap_check' key is registered in metamist.
+# There is no code default: the pipeline errors on import if the key is missing.
+enabled = true
+
 # Cohort the rolling array_aggregate_pgen analysis is registered against —
 # the array super-cohort (e.g. an ourdna-gt-aggregate cohort), NOT the WGS
-# cohort being QC'd. Required whenever the swap-check stages run; the stage
-# errors at queue time if unset or if no array_aggregate_pgen analysis is
-# registered against it.
+# cohort being QC'd. Required whenever the swap-check stages run (enabled =
+# true); the stage errors at queue time if unset or if no array_aggregate_pgen
+# analysis is registered against it.
 rolling_aggregate_cohort_id = 'COH0000'
 
 # Thresholds for swap classification — calibrated against COH8495 (expected

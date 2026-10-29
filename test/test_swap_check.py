@@ -2,11 +2,16 @@
 
 Covers the queue-time mapping classifier and path helpers in
 ``metamist_utils`` and the pairs.tsv parsing / classification / Slack
-formatting in ``jobs.classify_swaps``. All inputs are synthetic; no metamist
-round-trip is involved.
+formatting in ``jobs.classify_swaps``, and the ``swap_check.enabled`` switch
+in ``stages``. All inputs are synthetic; no metamist round-trip is involved.
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -282,3 +287,192 @@ def test_resolve_array_pgen_paths_requires_rolling_aggregate_cohort_id(monkeypat
     monkeypatch.setattr(stages, 'get_access_level', lambda: 'main')
     with pytest.raises(RuntimeError, match='rolling_aggregate_cohort_id'):
         stages.resolve_array_pgen_paths()
+
+
+# --- swap_check.enabled switch ---------------------------------------------
+
+SWAP_CHECK_STAGES = {
+    'PrepareSampleSwap',
+    'SwapCheckExportVcf',
+    'SwapCheckSomalierExtract',
+    'SwapCheckSomalierRelate',
+    'SwapCheckClassify',
+}
+
+
+@pytest.fixture
+def stage_init_without_workflow(monkeypatch):
+    """Stage.__init__ reads get_workflow().status_reporter; unit tests have no workflow."""
+    monkeypatch.setattr('cpg_flow.stage.get_workflow', lambda: SimpleNamespace(status_reporter=None))
+
+
+def reachable_stage_names(required_stages) -> set[str]:
+    """Names of the given stages and every stage they transitively require."""
+    names: set[str] = set()
+    todo = list(required_stages)
+    while todo:
+        stage_decorator = todo.pop()
+        if stage_decorator.__name__ in names:
+            continue
+        names.add(stage_decorator.__name__)
+        todo.extend(stage_decorator().required_stages_classes)
+    return names
+
+
+@pytest.mark.usefixtures('stage_init_without_workflow')
+def test_enabled_register_stage_requires_swap_check_classify():
+    # The test config (conftest) has the swap check enabled; the disabled branch is
+    # covered by test_disabled_config_drops_swap_check_from_the_decorated_stage.
+    assert stages.SWAP_CHECK_ENABLED is True
+    assert stages.RegisterQcMetricsToMetamist().required_stages_classes == [
+        stages.RunMultiQc,
+        stages.CheckMultiQc,
+        stages.SwapCheckClassify,
+    ]
+
+
+@pytest.mark.usefixtures('stage_init_without_workflow')
+def test_enabled_register_stage_reaches_every_swap_check_stage():
+    reachable = reachable_stage_names(stages.RegisterQcMetricsToMetamist().required_stages_classes)
+    assert reachable >= SWAP_CHECK_STAGES
+
+
+DEFAULT_CONFIG = Path(__file__).parent.parent / 'config' / 'single_sample_qc_popgen.toml'
+
+PRINT_REGISTER_REQUIRED_STAGES = """
+from types import SimpleNamespace
+from unittest import mock
+
+with mock.patch('cpg_flow.stage.get_workflow', lambda: SimpleNamespace(status_reporter=None)):
+    from single_sample_qc_popgen import stages
+
+    print([s.__name__ for s in stages.RegisterQcMetricsToMetamist().required_stages_classes])
+"""
+
+
+def import_stages_with_config(tmp_path: Path, config_text: str) -> subprocess.CompletedProcess[str]:
+    """Imports stages in a fresh interpreter, since required_stages is fixed at import time."""
+    config = tmp_path / 'config.toml'
+    config.write_text(config_text)
+    return subprocess.run(
+        [sys.executable, '-c', PRINT_REGISTER_REQUIRED_STAGES],  # noqa: S603
+        env=os.environ | {'CPG_CONFIG_PATH': str(config)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_disabled_config_drops_swap_check_from_the_decorated_stage(tmp_path):
+    default = DEFAULT_CONFIG.read_text()
+    assert 'enabled = true' in default
+    result = import_stages_with_config(tmp_path, default.replace('enabled = true', 'enabled = false'))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "['RunMultiQc', 'CheckMultiQc']"
+
+
+def test_missing_enabled_key_fails_on_import(tmp_path):
+    default = DEFAULT_CONFIG.read_text()
+    result = import_stages_with_config(tmp_path, default.replace('enabled = true\n', ''))
+
+    assert result.returncode != 0
+    assert 'workflow.swap_check.enabled is not set; set it to true' in result.stderr
+
+
+def test_quoted_enabled_value_fails_on_import(tmp_path):
+    # 'false' as a string is truthy and would silently enable the swap check.
+    default = DEFAULT_CONFIG.read_text()
+    result = import_stages_with_config(tmp_path, default.replace('enabled = true', "enabled = 'false'"))
+
+    assert result.returncode != 0
+    assert "workflow.swap_check.enabled must be a TOML boolean (true or false, unquoted); got 'false'" in result.stderr
+
+
+class FakeInputs:
+    def __init__(self) -> None:
+        self.as_str_stages: list[str] = []
+
+    def as_str(self, target, stage, key=None) -> str:  # noqa: ARG002
+        self.as_str_stages.append(stage.__name__)
+        return f'gs://bucket/{stage.__name__}/{key}'
+
+
+def queue_register_stage(monkeypatch, swap_check_enabled: bool) -> tuple[FakeInputs, dict[str, Any]]:
+    """Runs RegisterQcMetricsToMetamist.queue_jobs against fakes.
+
+    Returns the fake inputs and the kwargs the stage passed to register_qc_metamist.run.
+    """
+    calls: list[dict[str, Any]] = []
+
+    class FakePythonJob:
+        def call(self, _func, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(stages, 'SWAP_CHECK_ENABLED', swap_check_enabled)
+    monkeypatch.setattr(stages, 'initialise_python_job', lambda **_kwargs: FakePythonJob())
+    stage_class = stages.RegisterQcMetricsToMetamist.__wrapped__  # pyright: ignore[reportFunctionMemberAccess]
+    stage = stage_class.__new__(stage_class)  # skips Stage.__init__, which needs a workflow
+    monkeypatch.setattr(stage, 'expected_outputs', lambda cohort: 'gs://bucket/registered.json')  # noqa: ARG005
+    monkeypatch.setattr(stage, 'make_outputs', lambda **kwargs: kwargs)
+
+    inputs = FakeInputs()
+    stage.queue_jobs(SimpleNamespace(id='COH0001'), inputs)
+    assert len(calls) == 1
+    return inputs, calls[0]
+
+
+def test_register_stage_passes_swap_check_path_when_enabled(monkeypatch):
+    inputs, kwargs = queue_register_stage(monkeypatch, swap_check_enabled=True)
+
+    assert kwargs['swap_check_path'] == 'gs://bucket/SwapCheckClassify/None'
+    assert 'SwapCheckClassify' in inputs.as_str_stages
+
+
+def test_register_stage_skips_swap_check_input_when_disabled(monkeypatch):
+    inputs, kwargs = queue_register_stage(monkeypatch, swap_check_enabled=False)
+
+    assert kwargs['swap_check_path'] is None
+    assert 'SwapCheckClassify' not in inputs.as_str_stages
+
+
+# --- stage output versions ----------------------------------------------------
+
+
+def fake_version_config(values: dict[tuple[str, ...], str]) -> Any:
+    def fake(keys: list[str], default: str | None = None) -> str | None:
+        return values.get(tuple(keys), default)
+
+    return fake
+
+
+def test_qc_stages_default_to_v2_and_swap_check_stages_to_v1(monkeypatch):
+    # v1 exome MultiQC JSONs lack target_bed_* metrics; v1 CheckMultiQc failures predate
+    # per-sequencing-type thresholds; v1 registrations predate the swap check.
+    monkeypatch.setattr(stages, 'config_retrieve', fake_version_config({}))
+
+    assert stages.resolve_stage_version('RunMultiQc') == 'v2'
+    assert stages.resolve_stage_version('CheckMultiQc') == 'v2'
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v2'
+    assert stages.resolve_stage_version('SwapCheckClassify') == 'v1'
+
+
+def test_workflow_version_overrides_stage_defaults(monkeypatch):
+    monkeypatch.setattr(stages, 'config_retrieve', fake_version_config({('workflow', 'version'): 'v7'}))
+
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v7'
+    assert stages.resolve_stage_version('RunMultiQc') == 'v7'
+
+
+def test_per_stage_output_version_overrides_everything(monkeypatch):
+    monkeypatch.setattr(
+        stages,
+        'config_retrieve',
+        fake_version_config({
+            ('workflow', 'version'): 'v7',
+            ('workflow', 'output_versions', 'RegisterQcMetricsToMetamist'): 'v1',
+        }),
+    )
+
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v1'
+    assert stages.resolve_stage_version('RunMultiQc') == 'v7'

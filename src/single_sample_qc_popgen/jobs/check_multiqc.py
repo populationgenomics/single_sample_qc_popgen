@@ -20,9 +20,9 @@ from cpg_utils.slack import send_message
 from loguru import logger
 from metamist.graphql import gql, query
 
-from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL
+from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL, get_sequencing_type_profile
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
-from single_sample_qc_popgen.utils import load_json
+from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -121,7 +121,11 @@ class QCChecker:
     Encapsulates all logic for checking a MultiQC report for a cohort.
     """
     # Now accepts multiqc_data directly, rather than finding it itself
-    def __init__(self, cohort: Cohort, multiqc_data: dict):
+    def __init__(self, cohort: Cohort, multiqc_data: dict, sequencing_type: str):
+        profile = get_sequencing_type_profile(sequencing_type)
+        mean_coverage = profile.mean_coverage
+        median_coverage = profile.median_coverage
+        pct_gt_20x = profile.pct_gt_20x
         self.cohort = cohort
         self.cohort_sgs = self.cohort.get_sequencing_groups()
         self.sex_mapping, self.control_sg_ids = get_sgid_reported_sex_mapping_and_control_ids(self.cohort)
@@ -133,18 +137,22 @@ class QCChecker:
             self.cohort_sgs,
         )
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
-            'mean_coverage': {
-                'multiqc_report_name': 'Average sequenced coverage over genome',
-                'display_name': 'Mean Coverage',
+            mean_coverage.meta_key: {
+                'multiqc_report_name': mean_coverage.multiqc_name,
+                'display_name': mean_coverage.display_name,
+            },
+            median_coverage.meta_key: {
+                'multiqc_report_name': median_coverage.multiqc_name,
+                'display_name': median_coverage.display_name,
             },
             'ploidy_estimation': {
                 'calculator': self._calculate_ploidy,
                 'multiqc_report_name': 'Ploidy estimation',
                 'display_name': 'Ploidy Estimation',
             },
-            'pct_genome_gt_20x': {
-                'multiqc_report_name': 'wgs pct of genome with coverage [20x:inf)',
-                'display_name': 'Pct Genome @ >20x',
+            pct_gt_20x.meta_key: {
+                'multiqc_report_name': pct_gt_20x.multiqc_name,
+                'display_name': pct_gt_20x.display_name,
             },
             'q30_bases': {
                 'multiqc_report_name': 'Q30 bases',
@@ -153,10 +161,6 @@ class QCChecker:
             'q30_bases_pct': {
                 'multiqc_report_name': 'Q30 bases pct',
                 'display_name': 'Q30 Bases (%)',
-            },
-            'contamination_verifybamid': {
-                'multiqc_report_name': 'FREEMIX',
-                'display_name': 'Contamination (VerifyBamID)',
             },
             'contamination_dragen': {
                 'multiqc_report_name': 'Estimated sample contamination',
@@ -261,27 +265,56 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
         chimera_rate = 0.05
         [qc_thresholds.genome.equality]
         ploidy_estimation = True
+
+    Raises:
+        RuntimeError: If seq_type has no thresholds at all (its block is missing,
+            or its min/max/equality sub-blocks are all missing or empty), or if
+            a threshold names a metric that is not in qc_checker.QC_MAPPING.
+            A threshold on an unmapped metric would never be enforced, because
+            no MultiQC value exists under an unmapped name. A missing
+            min/max/equality sub-block alongside a non-empty one just means no
+            thresholds of that kind.
     """
-    threshold_d = get_config()['qc_thresholds'].get(seq_type, {}).get(config_key, {})
+    thresholds_by_seq_type = get_config().get('qc_thresholds', {})
+    thresholds_for_type = thresholds_by_seq_type.get(seq_type, {})
+    if not any(thresholds_for_type.get(kind) for kind in ('min', 'max', 'equality')):
+        raise RuntimeError(
+            f'No thresholds under [qc_thresholds.{seq_type}] in config (min, max and equality are all missing '
+            f'or empty); no QC thresholds would be applied to {seq_type} data. '
+            f'Blocks present: {sorted(thresholds_by_seq_type)}'
+        )
+    threshold_d = thresholds_for_type.get(config_key, {})
     qc_thresholds = {}
     for metric, threshold in threshold_d.items():
-        if metric in qc_checker.QC_MAPPING:
-            qc_thresholds[metric] = {
-                'threshold': threshold,
-                **qc_checker.QC_MAPPING[metric],
-            }
-        else:
-            logger.warning(
-                f"Metric '{metric}' has a threshold but is not defined in QC_MAPPING. "
-                f"Using default names."
-                f"Default names are the following: {list(qc_checker.QC_MAPPING.keys())}"
+        if metric not in qc_checker.QC_MAPPING:
+            raise RuntimeError(
+                f"[qc_thresholds.{seq_type}.{config_key}] sets '{metric}', which is not a valid metric for "
+                f'{seq_type} and would never be enforced. Valid metrics: {sorted(qc_checker.QC_MAPPING)}'
             )
-            qc_thresholds[metric] = {
-                'threshold': threshold,
-                'multiqc_report_name': metric,
-                'display_name': metric,
-            }
+        qc_thresholds[metric] = {
+            'threshold': threshold,
+            **qc_checker.QC_MAPPING[metric],
+        }
     return qc_thresholds
+
+def check_threshold_metrics_in_report(threshold_map: dict[str, dict[str, Any]], multiqc_data: dict) -> None:
+    """Raises RuntimeError if a thresholded metric is in no general-stats section.
+
+    A metric absent from the whole report means the wrong report or profile,
+    not a sample lacking a value, and its threshold would never be applied.
+    Calculated metrics without a multiqc_report_name are not checked.
+    """
+    missing = sorted(
+        name
+        for metric_config in threshold_map.values()
+        if (name := metric_config.get('multiqc_report_name'))
+        and not any(name in val_by_metric for section in multiqc_data.values() for val_by_metric in section.values())
+    )
+    if missing:
+        raise RuntimeError(
+            f'Thresholded metrics missing from every MultiQC general-stats section: {missing}. '
+            f'Sections present: {list(multiqc_data)}'
+        )
 
 def get_metric_value(
         qc_checker: QCChecker,
@@ -423,9 +456,8 @@ def run(
             multiqc_data_path,
             extract_key='report_general_stats_data'
         )
-    qc_checker = QCChecker(cohort, multiqc_data)
-
-    seq_type = get_config()['workflow']['sequencing_type']
+    seq_type = get_cohort_sequencing_type(cohort)
+    qc_checker = QCChecker(cohort, multiqc_data, seq_type)
 
     # Run checks
     bad_lines_by_sample = defaultdict(list)
@@ -437,6 +469,7 @@ def run(
     for check_type, fail_sign, good_sign, is_fail in check_definitions:
         # 1. Build thresholds for this check type (min, max, or equality)
         threshold_map = build_qc_thresholds(seq_type, check_type, qc_checker)
+        check_threshold_metrics_in_report(threshold_map, qc_checker.multiqc_data)
 
         # 2. Iterate through MultiQC data sections
         for section_data in qc_checker.multiqc_data.values():

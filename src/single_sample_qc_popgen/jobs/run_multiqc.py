@@ -13,30 +13,34 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
 
-from single_sample_qc_popgen.constants import MULTIQC_INPUT_SUFFIXES
-from single_sample_qc_popgen.utils import get_dragen_output_path, get_qc_path
+from single_sample_qc_popgen.constants import get_sequencing_type_profile
+from single_sample_qc_popgen.utils import get_cohort_sequencing_type, get_dragen_output_path, get_qc_path
 
 
-def dragen_qc_paths(sg_names: Sequence[str]) -> list[Path]:
+def dragen_qc_paths(sg_names: Sequence[str], sequencing_type: str) -> list[Path]:
     """Builds the explicit per-SG paths to the DRAGEN CSVs that MultiQC parses.
 
     Args:
         sg_names: Sequencing group names in the cohort.
+        sequencing_type: The workflow.sequencing_type, which selects the suffix list.
 
     Returns:
-        One path per sequencing group per suffix in MULTIQC_INPUT_SUFFIXES.
+        One path per sequencing group per suffix in the sequencing type's
+        multiqc_input_suffixes.
 
     Raises:
-        ValueError: If sg_names is empty, or if two paths share a basename
-            (duplicates would clobber each other in the flat staging directory).
+        ValueError: If sg_names is empty, if sequencing_type is unsupported, or
+            if two paths share a basename (duplicates would clobber each other
+            in the flat staging directory).
     """
+    suffixes = get_sequencing_type_profile(sequencing_type).multiqc_input_suffixes
     if not sg_names:
         raise ValueError('No sequencing groups to aggregate with MultiQC')
 
     paths = [
         get_dragen_output_path(filename=f'dragen_metrics/{sg_name}/{sg_name}.{suffix}')
         for sg_name in sg_names
-        for suffix in MULTIQC_INPUT_SUFFIXES
+        for suffix in suffixes
     ]
 
     duplicates = [name for name, count in Counter(p.name for p in paths).items() if count > 1]
@@ -51,7 +55,10 @@ def run_multiqc(
     outputs: dict[str, Path],
 ) -> BashJob:
     """Creates the batch job that runs MultiQC on the per-SG DRAGEN QC files."""
-    qc_file_paths = dragen_qc_paths([sg.name for sg in cohort.get_sequencing_groups()])
+    qc_file_paths = dragen_qc_paths(
+        [sg.name for sg in cohort.get_sequencing_groups()],
+        get_cohort_sequencing_type(cohort),
+    )
     logger.info(f'Staging {len(qc_file_paths)} QC files for MultiQC aggregation.')
 
     b = get_batch()

@@ -93,7 +93,7 @@ The pipeline selects MultiQC inputs and coverage metric names from `workflow.seq
 | MultiQC inputs | `MULTIQC_BASE_INPUT_SUFFIXES` | base list plus `target_bed_{coverage_metrics,overall_mean_cov,contig_mean_cov,fine_hist}.csv` |
 | Mean coverage (`mean_coverage`) | `Average sequenced coverage over genome` | `Average sequenced coverage over target region` |
 | Median coverage (`median_coverage`) | `wgs median autosomal coverage over genome` | `target bed median autosomal coverage over target region` |
-| Fraction at ≥20x coverage | `pct_genome_gt_20x` from `wgs pct of genome with coverage [20x:inf)` | `pct_target_gt_20x` from `target bed pct of target region with coverage [20x:inf)` |
+| Percentage (0–100) at ≥20x coverage | `pct_genome_gt_20x` from `wgs pct of genome with coverage [20x:inf)` | `pct_target_gt_20x` from `target bed pct of target region with coverage [20x:inf)` |
 
 `mean_coverage` and `median_coverage` keep their names for both types in the metamist `qc` meta and in `qc_thresholds`, and both can be thresholded (the default genome block sets neither). The ≥20x metric is named for its denominator, so an exome threshold is configured as `[qc_thresholds.exome.min] pct_target_gt_20x = ...`. The metric names are those MultiQC 1.30 (the pipeline's image version) emits for DRAGEN exome metrics.
 

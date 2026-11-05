@@ -12,7 +12,7 @@ from single_sample_qc_popgen.constants import get_sequencing_type_profile
 from single_sample_qc_popgen.jobs import check_multiqc
 from single_sample_qc_popgen.jobs.check_multiqc import QCChecker, build_qc_thresholds, check_threshold_metrics_in_report
 
-EXOME_PCT_TARGET_GT_20X_THRESHOLD = 0.95
+EXOME_PCT_TARGET_GT_20X_THRESHOLD = 95
 GENOME_MEDIAN_COVERAGE_THRESHOLD = 25
 EXOME_MEDIAN_COVERAGE_THRESHOLD = 50
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / 'config' / 'single_sample_qc_popgen.toml'
@@ -73,7 +73,7 @@ def test_build_qc_thresholds_exome_uses_exome_block_and_metric_names(monkeypatch
     set_qc_thresholds(
         monkeypatch,
         {
-            'genome': {'min': {'pct_genome_gt_20x': 0.9}},
+            'genome': {'min': {'pct_genome_gt_20x': 90}},
             'exome': {'min': {'pct_target_gt_20x': EXOME_PCT_TARGET_GT_20X_THRESHOLD, 'mean_coverage': 60}},
         },
     )
@@ -143,7 +143,7 @@ def test_build_qc_thresholds_median_coverage_is_thresholdable(monkeypatch, make_
 
 def test_build_qc_thresholds_unmapped_metric_raises(monkeypatch, make_qc_checker):
     # The realistic mistake: a genome-named metric in an exome block.
-    set_qc_thresholds(monkeypatch, {'exome': {'min': {'pct_genome_gt_20x': 0.9}}})
+    set_qc_thresholds(monkeypatch, {'exome': {'min': {'pct_genome_gt_20x': 90}}})
 
     with pytest.raises(RuntimeError, match='pct_genome_gt_20x') as exc_info:
         build_qc_thresholds('exome', 'min', make_qc_checker('exome'))

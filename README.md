@@ -6,7 +6,7 @@ The metrics used for sample hard filters are adapted from the All Of Us Research
 
 The pipeline reads the `dragen_metrics` output of the `dragen_align_pa` pipeline. An explicit list of per-sequencing-group DRAGEN CSVs (the required and report-only suffixes of each profile in `SEQUENCING_TYPE_PROFILES` in `constants.py`) is provided to MultiQC to generate a consolidated QC report, which is then parsed to extract the relevant QC metrics for filtering.
 
-Files are listed explicitly rather than discovered by glob because `dragen_metrics/<SG>/` mixes two layout vintages, and the nested duplicates in the older layout overwrite the top-level files when staged into MultiQC's flat input directory (see `docs/dragen-output-schema.md`). The listed files fall into two tiers per sequencing type. A required file feeds a QC threshold, a registered metric or the chimera and ploidy calculators; if one is missing from GCS the MultiQC job fails with an error naming the object. A report-only file feeds only MultiQC plots and tables; if one is missing the job logs the file name and a count and carries on, so that sequencing group lacks those plot entries but is otherwise QC'd as normal. The lists exclude:
+Files are listed explicitly rather than discovered by glob because `dragen_metrics/<SG>/` mixes two layout vintages, and the nested duplicates in the older layout overwrite the top-level files when staged into MultiQC's flat input directory (see `docs/dragen-output-schema.md`). The listed files fall into two tiers per sequencing type. A required file feeds a QC threshold, a registered metric or the chimera and ploidy calculators; if one is missing from GCS the MultiQC job fails with an error naming the object. A report-only file feeds only MultiQC plots and tables; if one is missing the job logs the file name and a count and carries on, so that sequencing group lacks those plot entries but is otherwise QC'd as normal. The names of the skipped files are written to `report_only_missing.txt`, a `RunMultiQc` output that is empty when nothing is missing. The job still fails if every report-only file is missing or more than 5% are (`REPORT_ONLY_MISSING_MAX_FRACTION` in `constants.py`), because that means the copy itself failed rather than a few files being absent, and the job then writes no outputs. The lists exclude:
 
 * files MultiQC does not parse (`cnv_metrics`, `sv_metrics`, `roh_metrics`, `wgs_hist`, and the per-region histogram/contig files);
 * time metrics CSVs, which record run provenance rather than sample QC. The `<SG>.dragen.time_metrics.csv` file present in newer outputs would also add a spurious `<SG>.dragen` sample to the report.
@@ -37,52 +37,40 @@ The workflow performs the following steps:
 ## Prerequisites
 
 1. **Metamist Cohort**: The pipeline requires a Metamist cohort with sequencing groups corresponding to the samples to be QCed. Ensure that the cohort is properly set up and accessible.
-2. **Configuration File**: A configuration file (TOML format) specifying the QC metrics thresholds, Slack notification settings, and other parameters is required. Production runs layer `config/single_sample_qc_popgen/defaults.toml` from the `production-pipelines-configuration` repo under a thin cohort config, by passing repeated `--config` flags to `analysis-runner` (merged left to right; see [How to Run](#how-to-run-the-pipeline)). A template configuration file is also provided at `config/single_sample_qc_popgen.toml` in this repo. It is a reference copy of the settings, not a default: it is not in the image and is not layered automatically. The merged configuration must carry every setting the pipeline needs, including `workflow.swap_check.enabled` and a `[qc_thresholds.<sequencing_type>]` block.
+2. **Configuration File**: A configuration file (TOML format) specifying the QC metrics thresholds, Slack notification settings, and other parameters is required. Production runs layer `config/single_sample_qc_popgen/defaults.toml` from the [production-pipelines-configuration](https://github.com/populationgenomics/production-pipelines-configuration) repo (the `--config` path is to a local clone of it) under a thin cohort config, by passing repeated `--config` flags to `analysis-runner` (merged left to right; see [How to Run](#how-to-run-the-pipeline)). A template configuration file is also provided at `config/single_sample_qc_popgen.toml` in this repo. It is a reference copy of the settings, not a default: it is not in the image and is not layered automatically. The merged configuration must carry every setting the pipeline needs, including `workflow.swap_check.enabled` and a `[qc_thresholds.<sequencing_type>]` block.
 
 
 ## Configuration
 
-Your TOML configuration file must specify the following key options:
+A production run layers two config files (see [How to Run](#how-to-run-the-pipeline)). The shared `config/single_sample_qc_popgen/defaults.toml` in [production-pipelines-configuration](https://github.com/populationgenomics/production-pipelines-configuration) sets everything the cohorts have in common: `workflow.last_stages`, the `[qc_thresholds.<sequencing_type>.*]` blocks, `workflow.send_to_slack`, `workflow.multiqc.deactivate_sgs`, the swap-check thresholds, `ica.pipelines.dragen_version` and `[slack]`. The thin cohort config on top of it sets only:
 
   * `[workflow]`:
 
+      * `dataset`: The Metamist dataset of the cohort.
       * `input_cohorts`: A list of Metamist cohort IDs to process (e.g., `['COH0001']`).
       * `sequencing_type`: Must be set to `"genome"` or `"exome"`; any other value raises. See [Sequencing types](#sequencing-types).
-      * `last_stages`: A list of the final stages to run. To run the full pipeline use `['RegisterQcMetricsToMetamist']`.
-      * `skip_stages`: (Optional) A list of stages to skip, e.g., `['RunMultiQc']`.
 
-Additional required/optional sections:
+  * `[workflow.swap_check]`:
+
+      * `enabled`: `true` for cohorts with genotyping arrays, `false` otherwise. It has no default. See [Sample-swap check](#sample-swap-check).
+      * `rolling_aggregate_cohort_id`: The array cohort to compare against. Needed only when `enabled = true`.
 
 ```toml
+[workflow]
+dataset = '<dataset>'
+input_cohorts = ['COH0001']
+sequencing_type = 'genome'
+
 [workflow.swap_check]
-enabled = true            # false for cohorts without genotyping arrays. See "Sample-swap check" below
-
-[cramqc]
-assume_sorted = true
-num_pcs = 4               # Number of principal components (if used in derived metrics)
-
-[workflow.multiqc]
-send_to_slack = true      # Send Slack notification summarising failed samples
-deactivate_sgs = false    # If true, deactivate sequencing groups that fail any hard QC threshold
-
-[qc_thresholds.genome.min]
-mean_coverage = 30
-q30_bases = 8e10          # Total aligned Q30 bases threshold
-
-[qc_thresholds.genome.max]
-contamination_dragen = 0.03
-chimera_rate = 0.03
-
-[qc_thresholds.genome.equality]
-ploidy_estimation = true  # Expect ploidy estimation to match reported sex mapping
-
-[ica.pipelines]
-dragen_version = 'dragen_3_7_8'  # DRAGEN version tag used for locating metrics
+enabled = true
+rolling_aggregate_cohort_id = '<array-cohort-id>'  # only when enabled = true
 ```
+
+A cohort config can override any key from the defaults, since later `--config` files win. `config/single_sample_qc_popgen.toml` in this repo is a reference copy of the full set of settings.
 
 Thresholds are read from `[qc_thresholds.<sequencing_type>.*]`; a run whose `qc_thresholds.<sequencing_type>` block is missing, or whose `min`, `max` and `equality` sub-blocks are all missing or empty, raises rather than applying no thresholds (a missing sub-block alongside a non-empty one is fine). A threshold on a metric that is not in that sequencing type's `QC_MAPPING` also raises, because it could never be enforced; the error lists the valid metric names.
 
-Note: Adjust thresholds per dataset QC policy. Setting `send_to_slack = false` suppresses notifications; enabling `deactivate_sgs` removes failing samples from downstream use.
+Note: Adjust thresholds per dataset QC policy. Setting `workflow.send_to_slack = false` suppresses notifications; enabling `workflow.multiqc.deactivate_sgs` removes failing samples from downstream use.
 
 ## Sequencing types
 
@@ -139,7 +127,7 @@ single_sample_qc_popgen
 ```
 
   * `--dataset`: The Metamist dataset associated with your cohort.
-  * `--config`: A path to a TOML configuration file. Repeat the flag to layer files; they are merged left to right, so later files override earlier ones. Pass the production defaults first and your thin cohort config last.
+  * `--config`: A path to a TOML configuration file. Repeat the flag to layer files; they are merged left to right, so later files override earlier ones. Pass the production defaults first (the path is inside a local clone of [production-pipelines-configuration](https://github.com/populationgenomics/production-pipelines-configuration)) and your thin cohort config last.
   * `--output-dir`: This is required by `analysis-runner` but is not used by this pipeline. You can leave it as `''`.
   * `--image`: The full path to the pipeline's Docker image. The example uses a `-dev` image, but production runs will use a production (i.e. no `-dev` image)
 
@@ -149,6 +137,7 @@ When successful the pipeline will produce the following outputs:
   * **RunMultiQc**
       * `<cohort_id>_multiqc_report.html`: The MultiQC HTML report for the cohort.
       * `<cohort_id>_multiqc_data.json`: The MultiQC JSON data file containing consolidated QC metrics.
+      * `report_only_missing.txt`: The names of the report-only input files that were missing and skipped, one per line. Empty if none were missing.
   * **CheckQcMetrics**
       * `<cohort_id>_failed_samples.json`: A JSON file listing samples that failed QC checks along with the reasons for failure.
         * Could be an empty JSON file if no samples failed QC.

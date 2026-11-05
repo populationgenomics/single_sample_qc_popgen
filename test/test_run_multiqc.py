@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import subprocess
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import hailtop.batch as hb
 import pytest
 from cpg_utils import to_path
 
-from single_sample_qc_popgen.constants import get_sequencing_type_profile
+from single_sample_qc_popgen.constants import REPORT_ONLY_MISSING_MAX_FRACTION, get_sequencing_type_profile
 from single_sample_qc_popgen.jobs import run_multiqc
 
 if TYPE_CHECKING:
@@ -205,6 +206,12 @@ def test_exome_wgs_coverage_metrics_is_report_only():
 # gs://X to $FAKE_BUCKET/X). `storage cp -I DEST` copies every listed object
 # that exists, then exits 1 naming the ones that matched nothing, which is what
 # gcloud does for missing objects whether or not it runs in parallel.
+#
+# $FAKE_GCLOUD_FAIL simulates a copy that fails although every object exists.
+# It applies only to a copy whose first URL contains $FAKE_GCLOUD_FAIL_ON, so
+# the required copy can succeed while the report-only copy fails:
+#   all: copies nothing and exits 1.
+#   after_first: copies only the first object and exits 1.
 FAKE_GCLOUD = """#!/usr/bin/env bash
 if [ "$1 $2" = "auth list" ]; then
     exit 0
@@ -215,7 +222,18 @@ if [ "$1 $2 $3" != "storage cp -I" ] || [ "$#" -ne 4 ]; then
 fi
 dest=$4
 unmatched=""
+fail_mode=""
+n=0
 while IFS= read -r url || [ -n "$url" ]; do
+    n=$((n + 1))
+    if [ "$n" = 1 ] && [ -n "${FAKE_GCLOUD_FAIL:-}" ]; then
+        case "$url" in
+            *"${FAKE_GCLOUD_FAIL_ON:?}"*) fail_mode=$FAKE_GCLOUD_FAIL ;;
+        esac
+    fi
+    if [ "$fail_mode" = all ] || { [ "$fail_mode" = after_first ] && [ "$n" -gt 1 ]; }; then
+        continue
+    fi
     source_file="$FAKE_BUCKET/${url#gs://}"
     if [ -f "$source_file" ]; then
         cp "$source_file" "$dest/"
@@ -223,6 +241,10 @@ while IFS= read -r url || [ -n "$url" ]; do
         unmatched="$unmatched$url"$'\n'
     fi
 done
+if [ -n "$fail_mode" ]; then
+    echo "ERROR: (gcloud.storage.cp) simulated copy failure: $fail_mode" >&2
+    exit 1
+fi
 if [ -n "$unmatched" ]; then
     printf 'ERROR: (gcloud.storage.cp) The following URLs matched no objects or files:\n%s' "$unmatched" >&2
     exit 1
@@ -230,20 +252,32 @@ fi
 """
 
 REQUIRED_URLS = ['gs://dragen/CPG1.mapping_metrics.csv', 'gs://dragen/CPG2.mapping_metrics.csv']
-REPORT_ONLY_URLS = [
-    'gs://dragen/CPG1.trimmer_metrics.csv',
-    'gs://dragen/CPG2.trimmer_metrics.csv',
-    'gs://dragen/CPG3.trimmer_metrics.csv',
-]
+# 40 files, so that REPORT_ONLY_MISSING_MAX_FRACTION of them is a whole number of files.
+REPORT_ONLY_URLS = [f'gs://dragen/CPG{n}.trimmer_metrics.csv' for n in range(1, 41)]
 
 
-def run_staging(tmp_path: Path, absent: set[str]) -> tuple[subprocess.CompletedProcess[str], Path]:
+def report_only_url(n: int) -> str:
+    return f'gs://dragen/CPG{n}.trimmer_metrics.csv'
+
+
+def basename(url: str) -> str:
+    return url.rsplit('/', 1)[-1]
+
+
+class Staging(NamedTuple):
+    result: subprocess.CompletedProcess[str]
+    staged: Path
+    missing_list: Path
+
+
+def run_staging(tmp_path: Path, absent: set[str], gcloud_fail: str | None = None) -> Staging:
     """Runs stage_inputs_command under the job's `set -euo pipefail` against a fake bucket.
 
     Every URL in REQUIRED_URLS and REPORT_ONLY_URLS exists in the fake bucket except those in absent.
+    gcloud_fail is the fake gcloud's failure mode for the report-only copy ('all' or 'after_first'), if any.
     """
     fake_bin = tmp_path / 'bin'
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     gcloud = fake_bin / 'gcloud'
     gcloud.write_text(FAKE_GCLOUD)
     gcloud.chmod(0o755)
@@ -261,43 +295,92 @@ def run_staging(tmp_path: Path, absent: set[str]) -> tuple[subprocess.CompletedP
     report_only_list.write_text('\n'.join(REPORT_ONLY_URLS))
     staged = tmp_path / 'staged'
     staged.mkdir()
+    missing_list = tmp_path / 'report_only_missing.txt'
 
     script = 'set -euo pipefail\n' + run_multiqc.stage_inputs_command(
-        str(required_list), str(report_only_list), str(staged)
+        str(required_list), str(report_only_list), str(staged), str(missing_list)
     )
     env = {'PATH': f'{fake_bin}:/usr/bin:/bin', 'FAKE_BUCKET': str(bucket)}
+    if gcloud_fail:
+        env |= {'FAKE_GCLOUD_FAIL': gcloud_fail, 'FAKE_GCLOUD_FAIL_ON': 'trimmer_metrics'}
     result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, check=False)  # noqa: S603, S607
-    return result, staged
+    return Staging(result, staged, missing_list)
 
 
 def test_stage_inputs_all_present(tmp_path):
-    result, staged = run_staging(tmp_path, absent=set())
+    result, staged, missing_list = run_staging(tmp_path, absent=set())
 
     assert result.returncode == 0, result.stderr
     assert len(list(staged.iterdir())) == len(REQUIRED_URLS) + len(REPORT_ONLY_URLS)
-    assert 'Report-only inputs: 0 of 3 missing and skipped' in result.stdout
+    assert f'Report-only inputs: 0 of {len(REPORT_ONLY_URLS)} missing and skipped' in result.stdout
     assert 'WARNING' not in result.stderr
+    # The list is created even when nothing is missing, so the stage output exists.
+    assert missing_list.read_text() == ''
 
 
-def test_stage_inputs_missing_report_only_is_logged_and_skipped(tmp_path):
-    # CPG3 is the last line of the list, which has no trailing newline.
-    absent = {'gs://dragen/CPG2.trimmer_metrics.csv', 'gs://dragen/CPG3.trimmer_metrics.csv'}
-    result, staged = run_staging(tmp_path, absent=absent)
+def test_stage_inputs_missing_report_only_is_logged_skipped_and_recorded(tmp_path):
+    # CPG40 is the last line of the list, which has no trailing newline.
+    absent = {report_only_url(2), report_only_url(40)}
+    result, staged, missing_list = run_staging(tmp_path, absent=absent)
 
     assert result.returncode == 0, result.stderr
-    assert sorted(p.name for p in staged.iterdir()) == [
-        'CPG1.mapping_metrics.csv',
-        'CPG1.trimmer_metrics.csv',
-        'CPG2.mapping_metrics.csv',
-    ]
+    assert sorted(p.name for p in staged.iterdir()) == sorted(
+        [basename(url) for url in REQUIRED_URLS + REPORT_ONLY_URLS if url not in absent]
+    )
     assert 'report-only input missing, skipped: CPG2.trimmer_metrics.csv' in result.stderr
-    assert 'report-only input missing, skipped: CPG3.trimmer_metrics.csv' in result.stderr
-    assert 'skipped: CPG1' not in result.stderr
-    assert 'Report-only inputs: 2 of 3 missing and skipped' in result.stdout
+    assert 'report-only input missing, skipped: CPG40.trimmer_metrics.csv' in result.stderr
+    assert 'skipped: CPG1.' not in result.stderr
+    assert 'Report-only inputs: 2 of 40 missing and skipped' in result.stdout
+    assert missing_list.read_text().splitlines() == ['CPG2.trimmer_metrics.csv', 'CPG40.trimmer_metrics.csv']
+
+
+def test_stage_inputs_missing_report_only_limit_is_the_configured_fraction(tmp_path):
+    """Missing exactly the limit passes, one more file over it fails."""
+    at_limit = math.floor(len(REPORT_ONLY_URLS) * REPORT_ONLY_MISSING_MAX_FRACTION)
+    assert at_limit >= 1
+
+    at_limit_run = run_staging(tmp_path / 'at', absent={report_only_url(n) for n in range(1, at_limit + 1)})
+    assert at_limit_run.result.returncode == 0, at_limit_run.result.stderr
+
+    over_limit_run = run_staging(tmp_path / 'over', absent={report_only_url(n) for n in range(1, at_limit + 2)})
+    assert over_limit_run.result.returncode != 0
+    over_limit_stderr = over_limit_run.result.stderr
+    assert f'ERROR: {at_limit + 1} of {len(REPORT_ONLY_URLS)} report-only inputs are missing' in over_limit_stderr
+    assert f'over the {REPORT_ONLY_MISSING_MAX_FRACTION * 100:g}% limit' in over_limit_stderr
+
+
+def test_stage_inputs_all_report_only_missing_fails(tmp_path):
+    result, _staged, missing_list = run_staging(tmp_path, absent=set(REPORT_ONLY_URLS))
+
+    assert result.returncode != 0
+    assert f'ERROR: all {len(REPORT_ONLY_URLS)} report-only inputs are missing' in result.stderr
+    assert len(missing_list.read_text().splitlines()) == len(REPORT_ONLY_URLS)
+
+
+def test_stage_inputs_report_only_copy_failing_wholesale_fails(tmp_path):
+    """The report-only copy fails outright although every object exists, and `|| true` hides its exit code."""
+    result, staged, _missing_list = run_staging(tmp_path, absent=set(), gcloud_fail='all')
+
+    assert result.returncode != 0
+    assert 'simulated copy failure' in result.stderr
+    assert f'ERROR: all {len(REPORT_ONLY_URLS)} report-only inputs are missing' in result.stderr
+    assert sorted(p.name for p in staged.iterdir()) == [basename(url) for url in REQUIRED_URLS]
+
+
+def test_stage_inputs_report_only_copy_cut_short_fails(tmp_path):
+    """The report-only copy copies one object and then dies, as a crashed gcloud would."""
+    result, staged, missing_list = run_staging(tmp_path, absent=set(), gcloud_fail='after_first')
+
+    assert result.returncode != 0
+    assert 'simulated copy failure' in result.stderr
+    expected_error = f'ERROR: {len(REPORT_ONLY_URLS) - 1} of {len(REPORT_ONLY_URLS)} report-only inputs are missing'
+    assert expected_error in result.stderr
+    assert (staged / 'CPG1.trimmer_metrics.csv').exists()
+    assert len(missing_list.read_text().splitlines()) == len(REPORT_ONLY_URLS) - 1
 
 
 def test_stage_inputs_missing_required_fails(tmp_path):
-    result, _staged = run_staging(tmp_path, absent={'gs://dragen/CPG2.mapping_metrics.csv'})
+    result, _staged, _missing_list = run_staging(tmp_path, absent={'gs://dragen/CPG2.mapping_metrics.csv'})
 
     assert result.returncode != 0
     assert 'gs://dragen/CPG2.mapping_metrics.csv' in result.stderr
@@ -305,8 +388,8 @@ def test_stage_inputs_missing_required_fails(tmp_path):
 
 
 def test_stage_inputs_missing_required_and_report_only_fails(tmp_path):
-    absent = {'gs://dragen/CPG1.mapping_metrics.csv', 'gs://dragen/CPG1.trimmer_metrics.csv'}
-    result, _staged = run_staging(tmp_path, absent=absent)
+    absent = {'gs://dragen/CPG1.mapping_metrics.csv', report_only_url(1)}
+    result, _staged, _missing_list = run_staging(tmp_path, absent=absent)
 
     assert result.returncode != 0
 
@@ -333,6 +416,7 @@ def test_run_multiqc_job_stages_required_strictly_and_report_only_leniently(monk
     outputs = {
         'multiqc_report_html': to_path(str(tmp_path / 'r.html')),
         'multiqc_json': to_path(str(tmp_path / 'r.json')),
+        'report_only_missing': to_path(str(tmp_path / 'missing.txt')),
     }
 
     job = run_multiqc.run_multiqc(cohort, outputs)  # pyright: ignore[reportArgumentType]
@@ -350,6 +434,17 @@ def test_run_multiqc_job_stages_required_strictly_and_report_only_leniently(monk
     assert report_only_copies[0].endswith('|| true')
     assert lines.index('set -euo pipefail') < lines.index(required_copies[0]) < lines.index(report_only_copies[0])
     assert '--continue-on-error' not in command
+
+    # The skipped-file list is created in the job's temp dir, not in the directory MultiQC parses,
+    # and is written out as the stage output.
+    missing_list_creations = [line for line in lines if line.startswith(': > "')]
+    assert len(missing_list_creations) == 1
+    missing_list_path = missing_list_creations[0].removeprefix(': > "').removesuffix('"')
+    assert missing_list_path.endswith('/report_only_missing')
+    assert f'echo "$report_only_name" >> "{missing_list_path}"' in lines
+    assert '/metrics_input' not in missing_list_path
+    written_to = job.report_only_missing._output_paths  # noqa: SLF001 # pyright: ignore[reportAttributeAccessIssue]
+    assert written_to == {str(outputs['report_only_missing'])}
 
     # Each list file holds exactly that tier's paths.
     expected = run_multiqc.dragen_qc_paths(['CPG1', 'CPG2'], 'genome')

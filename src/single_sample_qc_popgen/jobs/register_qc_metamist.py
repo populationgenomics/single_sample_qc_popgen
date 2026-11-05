@@ -100,6 +100,8 @@ def get_sgid_reported_sex_mapping(cohort: Cohort) -> dict[str, int]:
             mapping[sg['id']] = sg['sample']['participant']['reportedSex']
     return mapping
 
+# Each metric's source CSV must be in the profile's required_input_suffixes (constants.py),
+# because a report-only file may be missing for an SG.
 def metric_map(sequencing_type: str) -> list[tuple[str, str]]:
     """Metrics registered to metamist, as (meta_key, general-stats metric name).
 

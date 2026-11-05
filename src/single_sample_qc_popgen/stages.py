@@ -115,6 +115,7 @@ class RunMultiQc(CohortStage):
         return {
             'multiqc_json': get_output_prefix(cohort, self.name) / 'multiqc_data.json',
             'multiqc_report_html': get_output_prefix(cohort, self.name, category='web') / 'multiqc_report.html',
+            'report_only_missing': get_output_prefix(cohort, self.name) / 'report_only_missing.txt',
         }
 
     def queue_jobs(self, cohort: Cohort, inputs: StageInput) -> StageOutput | None: # noqa: ARG002

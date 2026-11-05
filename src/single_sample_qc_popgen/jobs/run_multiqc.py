@@ -5,6 +5,7 @@ Batch jobs to run MultiQC.
 import os
 from collections import Counter
 from collections.abc import Sequence
+from fractions import Fraction
 from typing import NamedTuple
 
 from cpg_flow.targets import Cohort
@@ -14,7 +15,7 @@ from cpg_utils.hail_batch import get_batch
 from hailtop.batch.job import BashJob
 from loguru import logger
 
-from single_sample_qc_popgen.constants import get_sequencing_type_profile
+from single_sample_qc_popgen.constants import REPORT_ONLY_MISSING_MAX_FRACTION, get_sequencing_type_profile
 from single_sample_qc_popgen.utils import get_cohort_sequencing_type, get_dragen_output_path, get_qc_path
 
 
@@ -73,24 +74,36 @@ def dragen_qc_paths(sg_names: Sequence[str], sequencing_type: str) -> MultiqcInp
     return paths
 
 
-def stage_inputs_command(required_list: str, report_only_list: str, local_dir: str) -> str:
+def stage_inputs_command(
+    required_list: str, report_only_list: str, local_dir: str, report_only_missing_list: str
+) -> str:
     """Builds the bash that copies the MultiQC input files into local_dir.
 
     The snippet assumes `set -euo pipefail`. A missing required file fails it.
-    A missing report-only file is logged and skipped.
+    A missing report-only file is logged, skipped and recorded in
+    report_only_missing_list, unless every report-only file is missing or the
+    missing share exceeds REPORT_ONLY_MISSING_MAX_FRACTION: then the copy is
+    taken to have failed and the snippet exits 1.
 
     `gcloud storage cp -I` copies every listed object that exists and then
     exits non-zero with an error naming the objects that matched nothing, even
     with CLOUDSDK_STORAGE_PROCESS_COUNT and CLOUDSDK_STORAGE_THREAD_COUNT above 1.
     So `|| true` after the report-only copy skips missing files without
     stopping the others. `--continue-on-error` is not used: gcloud ignores it
-    unless both counts are 1.
+    unless both counts are 1. `|| true` also swallows a wholesale copy failure,
+    but then every file is missing, which the missing-share check catches.
 
     Args:
         required_list: Path of the file listing the required object URLs, one per line.
         report_only_list: Path of the file listing the report-only object URLs.
         local_dir: Existing directory to copy the files into, flat by basename.
+        report_only_missing_list: Path to write the basenames of the missing
+            report-only files to, one per line. Created empty if none are
+            missing. Must not be inside local_dir.
     """
+    # Bash has no floats, so the limit is compared as missing * denominator > total * numerator.
+    limit = Fraction(str(REPORT_ONLY_MISSING_MAX_FRACTION))
+    limit_percent = f'{REPORT_ONLY_MISSING_MAX_FRACTION * 100:g}'
     return f"""
         # Required inputs: any failure fails the job.
         cat {required_list} | gcloud storage cp -I {local_dir}
@@ -98,16 +111,32 @@ def stage_inputs_command(required_list: str, report_only_list: str, local_dir: s
         # Report-only inputs: tolerate failures, then log what did not arrive.
         cat {report_only_list} | gcloud storage cp -I {local_dir} || true
 
+        # Created empty, so the output exists when nothing is missing.
+        : > "{report_only_missing_list}"
         report_only_total=0
         report_only_missing=0
+        # || [ -n ] keeps the last line, which has no trailing newline.
         while IFS= read -r report_only_path || [ -n "$report_only_path" ]; do
             report_only_total=$((report_only_total + 1))
-            if [ ! -e "{local_dir}/$(basename "$report_only_path")" ]; then
-                echo "WARNING: report-only input missing, skipped: $(basename "$report_only_path")" >&2
+            report_only_name=$(basename "$report_only_path")
+            if [ ! -e "{local_dir}/$report_only_name" ]; then
+                echo "WARNING: report-only input missing, skipped: $report_only_name" >&2
+                echo "$report_only_name" >> "{report_only_missing_list}"
                 report_only_missing=$((report_only_missing + 1))
             fi
         done < {report_only_list}
         echo "Report-only inputs: $report_only_missing of $report_only_total missing and skipped"
+
+        # A few lost files are tolerated. All of them, or more than {limit_percent}%, mean the copy itself failed.
+        if [ "$report_only_total" -gt 0 ] && [ "$report_only_missing" -eq "$report_only_total" ]; then
+            echo "ERROR: all $report_only_total report-only inputs are missing; the copy failed" >&2
+            exit 1
+        fi
+        if [ $((report_only_missing * {limit.denominator})) -gt $((report_only_total * {limit.numerator})) ]; then
+            echo "ERROR: $report_only_missing of $report_only_total report-only inputs are missing," \\
+                "over the {limit_percent}% limit; the copy failed or was cut short" >&2
+            exit 1
+        fi
         """
 
 
@@ -153,6 +182,13 @@ def run_multiqc(
         }
     )
 
+    staging_command = stage_inputs_command(
+        str(required_list_resource),
+        str(report_only_list_resource),
+        local_metrics_dir,
+        str(multiqc_job.report_only_missing),
+    )
+
     # CLOUDSDK_STORAGE_* match the job's 8 CPUs: the inputs are thousands of
     # small CSVs, so the copy is bound by request latency, not bandwidth.
     multiqc_job.command(
@@ -165,7 +201,7 @@ def run_multiqc(
         mkdir -p {local_metrics_dir}
 
         gcloud auth list > /dev/null
-        {stage_inputs_command(str(required_list_resource), str(report_only_list_resource), local_metrics_dir)}
+        {staging_command}
         multiqc \\
         {local_metrics_dir} \\
         -o {multiqc_job.outdir} \\
@@ -181,5 +217,6 @@ def run_multiqc(
     # Write outputs to their final GCS locations
     b.write_output(multiqc_job.html, str(outputs['multiqc_report_html']))
     b.write_output(multiqc_job.json, str(outputs['multiqc_json']))
+    b.write_output(multiqc_job.report_only_missing, str(outputs['report_only_missing']))
 
     return multiqc_job

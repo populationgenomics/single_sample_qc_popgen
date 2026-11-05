@@ -136,6 +136,8 @@ class QCChecker:
         self.sex_imputation_by_sg: dict[str, dict[str, Any]] = impute_sex_for_cohort(
             self.cohort_sgs,
         )
+        # Each metric's source CSV must be in the profile's required_input_suffixes (constants.py),
+        # because a report-only file may be missing for an SG.
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
             mean_coverage.meta_key: {
                 'multiqc_report_name': mean_coverage.multiqc_name,

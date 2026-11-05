@@ -17,8 +17,10 @@ num_pcs = 4
 # If true, will deactivate any sequencing groups that fail any of the qc_thresholds.
 deactivate_sgs = false
 
+# pct_genome_gt_20x is a percentage: DRAGEN's "PCT of genome with coverage
+# [20x: inf)" reads ~94 for a typical genome, so 90 means 90%.
 [qc_thresholds.genome.min]
-pct_genome_gt_20x = 0.90
+pct_genome_gt_20x = 90
 mapping_rate_pct = 80
 q30_bases_pct = 80
 

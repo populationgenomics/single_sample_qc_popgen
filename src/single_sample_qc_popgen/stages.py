@@ -71,9 +71,9 @@ def resolve_array_pgen_paths() -> tuple[str, str, str]:
 # bump a stage's default here when its inputs or outputs change. Why each stage is at its
 # current version: README, "Output versions and reuse".
 STAGE_DEFAULT_VERSIONS: dict[str, str] = {
-    'RunMultiQc': 'v2',
-    'CheckMultiQc': 'v2',
-    'RegisterQcMetricsToMetamist': 'v2',
+    'RunMultiQc': 'v3',
+    'CheckMultiQc': 'v3',
+    'RegisterQcMetricsToMetamist': 'v3',
 }
 
 

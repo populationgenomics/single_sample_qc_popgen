@@ -4,6 +4,7 @@ Options to deactivate sequencing groups that failed QC.
 """
 
 import json
+import math
 from typing import Any
 
 import cpg_utils
@@ -211,6 +212,36 @@ def build_sg_multiqc_meta_dict(
 
     return extracted_data
 
+def null_non_finite_floats(value: Any, sg_id: str, path: str) -> Any:
+    """Returns value with every NaN or +/-inf float, at any depth, replaced by None.
+
+    The metamist client serialises with requests, which raises InvalidJSONError
+    ("Out of range float values are not JSON compliant") on NaN or inf, and the
+    job would die part-way through the cohort. None is JSON null, which
+    metamist's JSON_MERGE_PATCH treats as "remove key": correct for a value
+    that could not be computed (e.g. f_stat_raw when somalier called no chrX
+    sites), because it also clears a stale value from an earlier run.
+
+    Each replacement is logged as a WARNING naming the SG and the key path.
+
+    Args:
+        value: A scalar, or dicts and lists nested to any depth.
+        sg_id: The sequencing group the value belongs to, for the log.
+        path: Dotted key path of value so far, for the log.
+
+    Returns:
+        A copy with the replacements made; containers are rebuilt, not mutated.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        logger.warning(f'SG {sg_id}: sending null instead of non-finite value {value} at {path}')
+        return None
+    if isinstance(value, dict):
+        return {key: null_non_finite_floats(item, sg_id, f'{path}.{key}') for key, item in value.items()}
+    if isinstance(value, list):
+        return [null_non_finite_floats(item, sg_id, f'{path}[{i}]') for i, item in enumerate(value)]
+    return value
+
+
 def update_sg_qc_metrics(
         failed_samples: dict[str, list[str]],
         meta_to_update: dict[str, Any],
@@ -237,6 +268,7 @@ def update_sg_qc_metrics(
     else:
         logger.warning(f'Failed samples: {failed_samples}')
     logger.info(f'meta to update: {meta_to_update}')
+    registered_by_sg: dict[str, dict[str, Any]] = {}
     for sg in cohort_sgs:
         sg_meta ={}
         sg_meta['qc'] = meta_to_update.get(sg.id, {})
@@ -254,7 +286,10 @@ def update_sg_qc_metrics(
         if swap_check_by_sg and sg.id in swap_check_by_sg:
             sg_meta['qc']['swap_check'] = swap_check_by_sg[sg.id]
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
-        meta_to_send = {'qc': {**dict.fromkeys(null_keys), **sg_meta['qc']}}
+        # The one boundary where non-finite floats are removed: just before the mutation,
+        # so the sex-imputation and swap-check values merged above are covered too.
+        registered_by_sg[sg.id] = null_non_finite_floats(sg_meta['qc'], sg.id, 'qc')
+        meta_to_send = {'qc': {**dict.fromkeys(null_keys), **registered_by_sg[sg.id]}}
         logger.info(f'Updating SG {sg.id} with meta: {meta_to_send}')
         metamist_project = cohort.dataset.name
         if get_access_level() == 'test':
@@ -271,9 +306,9 @@ def update_sg_qc_metrics(
         )
         logger.info(f'Updated SG {sg.id}: {result_update_mutation}')
 
-    # Write out meta fields updated to json
+    # Write out the meta fields registered per SG (same values as sent, so no NaN)
     with output.open('w') as f:
-        json.dump(meta_to_update, f, indent=4)
+        json.dump(registered_by_sg, f, indent=4, allow_nan=False)
 
     # Deactivate sequencing groups that failed QC. Controls are excluded:
     # deactivating a control would archive the cohort it belongs to.

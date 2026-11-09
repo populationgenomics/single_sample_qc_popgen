@@ -72,8 +72,8 @@ def resolve_array_pgen_paths() -> tuple[str, str, str]:
 # current version: README, "Output versions and reuse".
 STAGE_DEFAULT_VERSIONS: dict[str, str] = {
     'RunMultiQc': 'v3',
-    'CheckMultiQc': 'v3',
-    'RegisterQcMetricsToMetamist': 'v3',
+    'CheckMultiQc': 'v4',
+    'RegisterQcMetricsToMetamist': 'v4',
 }
 
 

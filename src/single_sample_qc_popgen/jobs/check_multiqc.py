@@ -9,8 +9,10 @@ a channel with:
 /invite @<your-app-name>
 """
 import json
-from collections import defaultdict
-from typing import Any, LiteralString
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any, Final, LiteralString
 
 import cpg_utils
 from cpg_flow.targets import Cohort
@@ -22,7 +24,12 @@ from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL, get_sequencing_type_profile
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
-from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
+from single_sample_qc_popgen.utils import (
+    get_cohort_sequencing_type,
+    load_json,
+    null_non_finite_floats,
+    resolve_metric_sections,
+)
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -69,51 +76,99 @@ MUTATION_SEQUENCING_GROUP = gql(
     """
 )
 
-def get_sgid_reported_sex_mapping_and_control_ids(cohort: Cohort) -> tuple[dict[str, int], set[str]]:
+PORTAL_SEX_FIELD: Final = 'participant_portal_reported_sex'
+REPORTED_SEX_FIELD: Final = 'reportedSex'
+# Reported sex codes that map to a karyotype to compare DRAGEN's ploidy with: 1 -> XY, 2 -> XX.
+# Any other code (0 = unknown, ...) gives nothing to compare against.
+USABLE_SEX_CODES: Final = (1, 2)
+
+# MultiQC general-stats metric names that the ploidy and chimera calculators read.
+PLOIDY_ESTIMATION: Final = 'Ploidy estimation'
+# The Slack 'Ploidy not checked' line lists at most this many SG IDs; the log has them all.
+SLACK_MAX_LISTED_SGS: Final = 10
+CHIMERIC_ALIGNMENTS: Final = 'Supplementary (chimeric) alignments'
+TOTAL_ALIGNMENTS: Final = 'Total alignments'
+
+
+@dataclass(frozen=True)
+class ReportedSexInfo:
+    """Reported sex of a cohort's sequencing groups, and which SGs are controls.
+
+    Attributes:
+        sex_by_sg: SG ID to reported sex (1 or 2), only for SGs with a usable value.
+        discordant_by_sg: SG ID to its QC failure line, for SGs whose portal and
+            reportedSex fields are both set and differ.
+        control_sg_ids: SGs whose sample is an OurDNA control.
     """
-    Get a mapping of sequencing group ID to reported sex.
-    Preferentially uses 'participant_portal_reported_sex' from the
-    participant.meta field, and falls back to 'reportedSex'.
+
+    sex_by_sg: dict[str, int]
+    discordant_by_sg: dict[str, str]
+    control_sg_ids: set[str]
+
+
+def resolve_reported_sex(portal_sex: int | None, reported_sex: int | None) -> tuple[int | None, str | None]:
+    """Combines the participant's two reported-sex fields.
+
+    The fields can disagree (e.g. portal 0 = unknown against reportedSex 1), so
+    a value in one is never preferred over a different value in the other.
+
+    Returns:
+        (sex, discordant_line). sex is 1 or 2 when the fields agree on, or only
+        one field holds, a usable code; None when neither is set or the code
+        is not usable (e.g. 0). discordant_line is the QC failure line when both
+        fields are set and differ (sex is then None), else None.
     """
-    mapping: dict[str, int] = {}
+    if portal_sex is not None and reported_sex is not None and portal_sex != reported_sex:
+        return None, (
+            f'Reported sex discordant ({PORTAL_SEX_FIELD}={portal_sex!r}, {REPORTED_SEX_FIELD}={reported_sex!r})'
+        )
+    sex = portal_sex if portal_sex is not None else reported_sex
+    return (sex if sex in USABLE_SEX_CODES else None), None
+
+
+def get_reported_sex_info(cohort: Cohort) -> ReportedSexInfo:
+    """Looks up each SG's reported sex in metamist, and which SGs are controls.
+
+    The sex comes from 'participant_portal_reported_sex' (participant.meta) and
+    'reportedSex', combined by resolve_reported_sex. A participant with only
+    'reportedSex' set is logged as a fallback from the portal field.
+    """
     response = query(REPORTED_SEX_QUERY, variables={'cohortId': cohort.id})
+    sex_by_sg: dict[str, int] = {}
+    discordant_by_sg: dict[str, str] = {}
     control_sg_ids: set[str] = set()
     for coh in response['cohorts']:
         for sg in coh['sequencingGroups']:
             sg_id = sg['id']
             participant = sg['sample']['participant']
-            is_control: bool = OURDNA_CONTROL in sg['sample']['externalId']
-            if is_control:
+            if OURDNA_CONTROL in sg['sample']['externalId']:
                 control_sg_ids.add(sg_id)
 
-            preferred_field = None
             participant_meta = participant.get('meta')
-
-            # 1. Check for the preferred field first
-            if isinstance(participant_meta, dict):
-                preferred_field = participant_meta.get('participant_portal_reported_sex')
-
-            # 2. If the preferred field exists, use it
-            if preferred_field is not None:
-                mapping[sg_id] = preferred_field
-
-            # 3. If not, try the fallback field
-            else:
-                fallback_field = participant.get('reportedSex')
-                if fallback_field is not None:
-                    mapping[sg_id] = fallback_field
-                    logger.warning(
-                        f"SG {sg_id}: Preferred field 'participant_portal_reported_sex' "
-                        f"not found in meta. Using field 'reportedSex' as fallback."
-                    )
-                else:
-                    # 4. If both are missing, log an error
-                    logger.error(
-                        f"SG {sg_id}: CANNOT FIND SEX. Both 'participant_portal_reported_sex' "
-                        f"and 'reportedSex' are missing or null. This SG will be "
-                        f"missing from the sex map."
-                    )
-    return mapping, control_sg_ids
+            portal_sex = participant_meta.get(PORTAL_SEX_FIELD) if isinstance(participant_meta, dict) else None
+            reported_sex = participant.get(REPORTED_SEX_FIELD)
+            if portal_sex is not None:
+                # reportedSex is int | None in metamist, but the portal field is free JSON in
+                # participant meta: compare as int, so '1' against 1 is not read as discordant.
+                try:
+                    portal_sex = int(portal_sex)
+                except (TypeError, ValueError) as e:
+                    raise ValueError(
+                        f'SG {sg_id}: {PORTAL_SEX_FIELD} is {portal_sex!r}, not an integer sex code'
+                    ) from e
+            if portal_sex is None and reported_sex is not None:
+                logger.warning(
+                    f"SG {sg_id}: Preferred field '{PORTAL_SEX_FIELD}' "
+                    f"not found in meta. Using field '{REPORTED_SEX_FIELD}' as fallback."
+                )
+            sex, discordant_line = resolve_reported_sex(portal_sex, reported_sex)
+            if sex is not None:
+                sex_by_sg[sg_id] = sex
+            if discordant_line is not None:
+                # Logged whether or not a ploidy threshold makes it a QC failure.
+                logger.warning(f'SG {sg_id}: {discordant_line}')
+                discordant_by_sg[sg_id] = discordant_line
+    return ReportedSexInfo(sex_by_sg=sex_by_sg, discordant_by_sg=discordant_by_sg, control_sg_ids=control_sg_ids)
 
 
 class QCChecker:
@@ -128,7 +183,11 @@ class QCChecker:
         pct_gt_20x = profile.pct_gt_20x
         self.cohort = cohort
         self.cohort_sgs = self.cohort.get_sequencing_groups()
-        self.sex_mapping, self.control_sg_ids = get_sgid_reported_sex_mapping_and_control_ids(self.cohort)
+        reported_sex = get_reported_sex_info(self.cohort)
+        # Only SGs with a usable reported sex (1 or 2); the ploidy check applies to these alone.
+        self.sex_mapping: dict[str, int] = reported_sex.sex_by_sg
+        self.sex_discordant_by_sg: dict[str, str] = reported_sex.discordant_by_sg
+        self.control_sg_ids: set[str] = reported_sex.control_sg_ids
         self.multiqc_data = multiqc_data
         # Per-SG raw somalier signals (f_stat_raw, x_het_rate, counters).
         # Karyotype derivation lives downstream in ourdna_genomic_atlas; this
@@ -138,6 +197,11 @@ class QCChecker:
         )
         # Each metric's source CSV must be in the profile's required_input_suffixes (constants.py),
         # because a report-only file may be missing for an SG.
+        #
+        # Each entry names the MultiQC general-stats metrics it reads: 'multiqc_report_name'
+        # for a direct lookup, or 'calculator' (taking the SG's values of 'input_metric_names')
+        # for a derived value. 'requires_reported_sex' marks a metric that is only checked
+        # for SGs with a usable reported sex (see check_cohort_metrics).
         self.QC_MAPPING: dict[str, dict[str, Any]] = {
             mean_coverage.meta_key: {
                 'multiqc_report_name': mean_coverage.multiqc_name,
@@ -149,7 +213,8 @@ class QCChecker:
             },
             'ploidy_estimation': {
                 'calculator': self._calculate_ploidy,
-                'multiqc_report_name': 'Ploidy estimation',
+                'input_metric_names': [PLOIDY_ESTIMATION],
+                'requires_reported_sex': True,
                 'display_name': 'Ploidy Estimation',
             },
             pct_gt_20x.meta_key: {
@@ -178,6 +243,7 @@ class QCChecker:
             },
             'chimera_rate': {
                 'calculator': self._calculate_chimera_rate,
+                'input_metric_names': [CHIMERIC_ALIGNMENTS, TOTAL_ALIGNMENTS],
                 'display_name': 'Chimera Rate',
             },
             'mean_insert_size': {
@@ -211,28 +277,31 @@ class QCChecker:
         the sample for manual review. Somalier-derived signals are advisory-only
         and live downstream; they do not contribute to this pass/fail decision.
 
+        Only called for SGs whose reported sex is 1 or 2 (SGs without a usable
+        reported sex are not checked, see check_cohort_metrics).
+
         Returns:
             tuple[bool | None, str, str]: A tuple containing:
                 - is_match (bool | None): True if ploidy matches expected sex exactly,
-                  False if there is a mismatch, or None if metadata/metrics are missing.
+                  False if there is a mismatch, or None if DRAGEN gave no ploidy.
                 - raw_ploidy (str): The raw string value from DRAGEN (e.g., 'XX', 'Unknown').
-                - expected_ploidy (str): The expected string (e.g., 'XY', 'XX') or error msg.
+                - expected_ploidy (str): The expected string ('XY' or 'XX').
+
+        Raises:
+            ValueError: If sg_id has no reported sex of 1 or 2 in sex_mapping.
         """
-        raw_ploidy = d.get('Ploidy estimation', 'Unknown')
+        raw_ploidy = d.get(PLOIDY_ESTIMATION, 'Unknown')
 
         expected_sex_num = sex_mapping.get(sg_id)
+        if expected_sex_num not in USABLE_SEX_CODES:
+            raise ValueError(f'{sg_id} has no usable reported sex ({expected_sex_num!r}); cannot check its ploidy')
 
-        if expected_sex_num is None:
-            return None, raw_ploidy, f"Unknown (no sex for {sg_id})"
-
-        if raw_ploidy == 'Unknown':
+        # No usable DRAGEN call: 'Unknown', or a non-string or empty value. None here is
+        # reported as '<display name> missing'.
+        if not isinstance(raw_ploidy, str) or raw_ploidy in ('', 'Unknown'):
             return None, raw_ploidy, str(expected_sex_num)
 
         expected_ploidy = 'XY' if expected_sex_num == 1 else 'XX'
-
-        # Handle cases where sex is neither 1 nor 2 (e.g. 0/Unknown)
-        if expected_sex_num not in [1, 2]:
-             return None, raw_ploidy, f"Ambiguous Sex Code {expected_sex_num}"
 
         # Strict comparison check
         # This flags anything that isn't exactly XX or XY (e.g., XO, XXY, XYY, XXX)
@@ -248,7 +317,7 @@ class QCChecker:
         Returns: (value_to_check, raw_value_for_log, expected_value_for_log)
         """
         try:
-            val = d['Supplementary (chimeric) alignments'] / d['Total alignments']
+            val = d[CHIMERIC_ALIGNMENTS] / d[TOTAL_ALIGNMENTS]
             # No raw value or expected value, so return val and None
             return val, f"{val:.4f}", None
         except (KeyError, ZeroDivisionError, TypeError):
@@ -299,24 +368,36 @@ def build_qc_thresholds(seq_type: str, config_key: str, qc_checker: QCChecker) -
         }
     return qc_thresholds
 
-def check_threshold_metrics_in_report(threshold_map: dict[str, dict[str, Any]], multiqc_data: dict) -> None:
-    """Raises RuntimeError if a thresholded metric is in no general-stats section.
+def metric_input_names(metric_config: dict[str, Any]) -> list[str]:
+    """The MultiQC general-stats metric names a QC_MAPPING entry reads."""
+    if 'input_metric_names' in metric_config:
+        return metric_config['input_metric_names']
+    return [metric_config['multiqc_report_name']]
 
-    A metric absent from the whole report means the wrong report or profile,
-    not a sample lacking a value, and its threshold would never be applied.
-    Calculated metrics without a multiqc_report_name are not checked.
+
+def get_metric_inputs(
+    multiqc_data: dict,
+    section_by_metric: dict[str, str],
+    sg_id: str,
+    input_names: list[str],
+) -> dict[str, Any]:
+    """The SG's values of the named metrics, each read from the one section that holds it.
+
+    A metric is left out when the SG has no value for it: the SG is absent
+    from the section, the key is absent, or the value is None.
     """
-    missing = sorted(
-        name
-        for metric_config in threshold_map.values()
-        if (name := metric_config.get('multiqc_report_name'))
-        and not any(name in val_by_metric for section in multiqc_data.values() for val_by_metric in section.values())
-    )
-    if missing:
-        raise RuntimeError(
-            f'Thresholded metrics missing from every MultiQC general-stats section: {missing}. '
-            f'Sections present: {list(multiqc_data)}'
-        )
+    inputs: dict[str, Any] = {}
+    for name in input_names:
+        value = multiqc_data[section_by_metric[name]].get(sg_id, {}).get(name)
+        if value is not None:
+            inputs[name] = value
+    return inputs
+
+
+def is_missing(value: Any) -> bool:
+    """True for None and for a non-finite float (NaN or +/-inf), which no threshold can judge."""
+    return value is None or (isinstance(value, float) and not math.isfinite(value))
+
 
 def get_metric_value(
         qc_checker: QCChecker,
@@ -326,6 +407,7 @@ def get_metric_value(
     ) -> tuple[Any, str, str | None]:
         """
         Gets the metric value, either from a calculator or direct lookup.
+        val_by_metric holds the SG's values from get_metric_inputs.
         Returns: (value_to_check, raw_value_for_log, expected_value_for_log)
         """
         if 'calculator' in metric_config:
@@ -379,13 +461,19 @@ def write_sex_imputation_to_json(
     logger.info(
         f'Writing {len(sex_imputation_by_sg)} sex-imputation record(s) to {output}',
     )
+    # f_stat_raw and x_het_rate are NaN when somalier called no chrX sites; write
+    # them as null so the file is strict JSON, and fail loudly on any other NaN.
+    cleaned = {
+        sg_id: null_non_finite_floats(record, sg_id, 'sex_imputation') for sg_id, record in sex_imputation_by_sg.items()
+    }
     with to_path(output).open('w') as f:
-        json.dump(sex_imputation_by_sg, f, indent=4)
+        json.dump(cleaned, f, indent=4, allow_nan=False)
 
 def generate_slack_message(
     bad_lines_by_sample: dict[str, list[str]],
     qc_checker: QCChecker,
     html_url: str,
+    ploidy_not_checked: Sequence[str],
 ) -> LiteralString:
     """Constructs the final Slack message.
 
@@ -393,6 +481,9 @@ def generate_slack_message(
     block and excluded from the flagged count and high-failure-rate alert:
     they are not topped up to yield, so their coverage failures are expected
     and should not read as real QC failures.
+
+    SGs without a usable reported sex are not failures; the ploidy_not_checked
+    SG IDs are listed in an informational line so they are not overlooked.
     """
     control_sg_ids = qc_checker.control_sg_ids
 
@@ -429,7 +520,16 @@ def generate_slack_message(
     else:
         messages.append(f'✅ {title}')
 
-    # 3. Informational control block
+    # 3. Informational: SGs whose ploidy could not be checked for lack of a reported sex
+    if ploidy_not_checked:
+        listed = ', '.join(ploidy_not_checked[:SLACK_MAX_LISTED_SGS])
+        if len(ploidy_not_checked) > SLACK_MAX_LISTED_SGS:
+            listed += ', … (full list in the CheckMultiQc log)'
+        messages.append(
+            f'ℹ️ Ploidy not checked (no reported sex): {len(ploidy_not_checked)} SGs: {listed}'  # noqa: RUF001
+        )
+
+    # 4. Informational control block
     if control_failures:
         messages.append('\n— Controls —')
         for sg_id, bad_lines in control_failures.items():
@@ -439,6 +539,150 @@ def generate_slack_message(
     logger.info(text)
 
     return text
+
+
+# (config key, sign shown on failure, sign shown on pass, is_fail(value, threshold))
+CHECK_DEFINITIONS: Final = [
+    ('min', '<', '≥', lambda val, thresh: val < thresh),
+    ('max', '>', '≤', lambda val, thresh: val > thresh),
+    ('equality', '!=', '==', lambda val, thresh: val != thresh),
+]
+
+
+@dataclass(frozen=True)
+class QCResults:
+    """Outcome of check_cohort_metrics.
+
+    Attributes:
+        bad_lines_by_sample: SG ID to its QC failure lines; SGs that pass are absent.
+        ploidy_not_checked: Sorted IDs of non-control SGs whose ploidy was not checked
+            because they have no usable reported sex. Not failures.
+    """
+
+    bad_lines_by_sample: dict[str, list[str]]
+    ploidy_not_checked: list[str]
+
+
+def record_failure(bad_lines_by_sample: dict[str, list[str]], sg_id: str, line: str) -> None:
+    """Logs a QC failure and adds it to the SG's lines, once per distinct line."""
+    if line in bad_lines_by_sample.get(sg_id, []):
+        return
+    logger.warning(f'❗ {sg_id}: {line}')
+    bad_lines_by_sample.setdefault(sg_id, []).append(line)
+
+
+def check_sg_metric(
+    qc_checker: QCChecker,
+    section_by_metric: dict[str, str],
+    sg_id: str,
+    metric_config: dict[str, Any],
+    check_definition: tuple[str, str, str, Any],
+    bad_lines_by_sample: dict[str, list[str]],
+) -> None:
+    """Checks one SG against one threshold, recording a failure line if it fails.
+
+    A metric the SG has no value for (absent, None, NaN, or not computable by
+    the calculator from missing or zero inputs) is a failure, '<display name> missing',
+    because an unchecked SG would otherwise pass unnoticed.
+    """
+    check_type, fail_sign, good_sign, is_fail = check_definition
+    display_name = metric_config['display_name']
+
+    # DRAGEN does not provide pct chimeras directly, so we calculate it
+    # Also, ploidy estimation needs custom calculation
+    inputs = get_metric_inputs(
+        qc_checker.multiqc_data, section_by_metric, sg_id, metric_input_names(metric_config)
+    )
+    val_to_check, raw_val_for_log, expected_val_for_log = get_metric_value(qc_checker, metric_config, inputs, sg_id)
+
+    if is_missing(val_to_check):
+        record_failure(bad_lines_by_sample, sg_id, f'{display_name} missing')
+        return
+
+    threshold = metric_config['threshold']
+    failed = is_fail(val_to_check, threshold)
+    line = format_log_line(
+        display_name,
+        val_to_check,
+        threshold,
+        fail_sign if failed else good_sign,
+        check_type,
+        raw_val_for_log,
+        expected_val_for_log,
+    )
+    if failed:
+        record_failure(bad_lines_by_sample, sg_id, line)
+    else:
+        logger.info(f'✅ {sg_id}: {line}')
+
+
+def check_cohort_metrics(qc_checker: QCChecker, seq_type: str) -> QCResults:
+    """Checks every cohort SG against every configured threshold.
+
+    Each metric's value is read from the one MultiQC section that holds it
+    (resolve_metric_sections), for every SG in the cohort, so an SG with no value
+    fails with '<display name> missing' instead of being skipped.
+
+    Reported sex gates the ploidy check:
+      * Portal and reportedSex fields both set and different: the SG fails with a
+        'Reported sex discordant' line, and its ploidy is not checked.
+      * No usable reported sex (neither field set, or only 0): ploidy is not checked
+        and the SG does not fail. Non-control SGs are returned in ploidy_not_checked.
+        Controls are left out because their sex is never recorded.
+    Both only apply when a threshold on a metric needing the reported sex is configured.
+
+    Raises:
+        RuntimeError: If there are no thresholds for seq_type (see build_qc_thresholds).
+        ValueError: If a metric a threshold reads (including calculator inputs) is in no
+            MultiQC section, which means the wrong report or profile, or is in more than one.
+    """
+    multiqc_data = qc_checker.multiqc_data
+    threshold_maps = {
+        check_definition[0]: build_qc_thresholds(seq_type, check_definition[0], qc_checker)
+        for check_definition in CHECK_DEFINITIONS
+    }
+    section_by_metric = resolve_metric_sections(
+        multiqc_data,
+        sorted(
+            {
+                name
+                for threshold_map in threshold_maps.values()
+                for metric_config in threshold_map.values()
+                for name in metric_input_names(metric_config)
+            }
+        ),
+    )
+
+    bad_lines_by_sample: dict[str, list[str]] = {}
+    ploidy_not_checked: list[str] = []
+    if any(
+        metric_config.get('requires_reported_sex')
+        for threshold_map in threshold_maps.values()
+        for metric_config in threshold_map.values()
+    ):
+        for sg in qc_checker.cohort_sgs:
+            if sg.id in qc_checker.sex_discordant_by_sg:
+                record_failure(bad_lines_by_sample, sg.id, qc_checker.sex_discordant_by_sg[sg.id])
+            elif sg.id not in qc_checker.sex_mapping and sg.id not in qc_checker.control_sg_ids:
+                ploidy_not_checked.append(sg.id)
+        ploidy_not_checked.sort()
+        if ploidy_not_checked:
+            logger.warning(
+                f'Ploidy not checked for {len(ploidy_not_checked)} SGs with no usable reported sex '
+                f"(neither '{PORTAL_SEX_FIELD}' nor '{REPORTED_SEX_FIELD}' is 1 or 2): {ploidy_not_checked}"
+            )
+
+    for check_definition in CHECK_DEFINITIONS:
+        for sg in qc_checker.cohort_sgs:
+            for metric_config in threshold_maps[check_definition[0]].values():
+                if metric_config.get('requires_reported_sex') and sg.id not in qc_checker.sex_mapping:
+                    # Discordant SGs already failed and the others are listed above.
+                    continue
+                check_sg_metric(
+                    qc_checker, section_by_metric, sg.id, metric_config, check_definition, bad_lines_by_sample
+                )
+
+    return QCResults(bad_lines_by_sample=bad_lines_by_sample, ploidy_not_checked=ploidy_not_checked)
 
 
 def run(
@@ -461,66 +705,8 @@ def run(
     seq_type = get_cohort_sequencing_type(cohort)
     qc_checker = QCChecker(cohort, multiqc_data, seq_type)
 
-    # Run checks
-    bad_lines_by_sample = defaultdict(list)
-    check_definitions =  [
-        ('min', '<', '≥', lambda val, thresh: val < thresh),
-        ('max', '>', '≤', lambda val, thresh: val > thresh),
-        ('equality', '!=', '==', lambda val, thresh: val != thresh),
-    ]
-    for check_type, fail_sign, good_sign, is_fail in check_definitions:
-        # 1. Build thresholds for this check type (min, max, or equality)
-        threshold_map = build_qc_thresholds(seq_type, check_type, qc_checker)
-        check_threshold_metrics_in_report(threshold_map, qc_checker.multiqc_data)
-
-        # 2. Iterate through MultiQC data sections
-        for section_data in qc_checker.multiqc_data.values():
-            # 3. Iterate through each sample in the section
-            for sg_id, val_by_metric in section_data.items():
-                # 4. Iterate through each metric to check
-                for metric_config in threshold_map.values():
-                    # 5. Get the value for the metric
-                    # DRAGEN does not provide pct chimeras directly, so we calculate it
-                    # Also, ploidy estimation needs custom calculation
-                    (
-                        val_to_check,
-                        raw_val_for_log,
-                        expected_val_for_log,
-                    ) = get_metric_value(qc_checker, metric_config, val_by_metric, sg_id)
-
-                    if val_to_check is None:
-                        # Metric not found or calculation failed
-                        continue
-
-                    threshold = metric_config['threshold']
-                    display_name = metric_config['display_name']
-
-                    # 6. Perform the check
-                    if is_fail(val_to_check, threshold):
-                        # --- FAILURE ---
-                        sign = fail_sign
-                        is_failure = True
-                    else:
-                        # --- SUCCESS ---
-                        sign = good_sign
-                        is_failure = False
-
-                     # 7. Format and log the result
-                    line = format_log_line(
-                        display_name,
-                        val_to_check,
-                        threshold,
-                        sign,
-                        check_type,
-                        raw_val_for_log,
-                        expected_val_for_log,
-                    )
-
-                    if is_failure:
-                        logger.warning(f'❗ {sg_id}: {line}')
-                        bad_lines_by_sample[sg_id].append(line)
-                    else:
-                        logger.info(f'✅ {sg_id}: {line}')
+    results = check_cohort_metrics(qc_checker, seq_type)
+    bad_lines_by_sample = results.bad_lines_by_sample
 
     logger.info('') # Newline for readability
 
@@ -532,7 +718,9 @@ def run(
     write_sex_imputation_to_json(qc_checker.sex_imputation_by_sg, sex_imputation_output)
 
     if config_retrieve(key=['workflow', 'send_to_slack'], default=True):
-        text: LiteralString = generate_slack_message(bad_lines_by_sample, qc_checker, html_url)
+        text: LiteralString = generate_slack_message(
+            bad_lines_by_sample, qc_checker, html_url, results.ploidy_not_checked
+        )
         send_message(text)
     else:
         logger.info('Skipping Slack notification as per config.')

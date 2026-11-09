@@ -13,7 +13,12 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import OURDNA_CONTROL, SEQUENCING_TYPE_PROFILES, get_sequencing_type_profile
-from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
+from single_sample_qc_popgen.utils import (
+    get_cohort_sequencing_type,
+    load_json,
+    null_non_finite_floats,
+    resolve_metric_sections,
+)
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -139,44 +144,6 @@ def metric_map(sequencing_type: str) -> list[tuple[str, str]]:
     ]
 
 
-def resolve_metric_sections(general_stats: dict[str, Any], metric_keys: list[str]) -> dict[str, str]:
-    """Maps each metric name to the single general-stats section containing it.
-
-    MultiQC keys report_general_stats_data by module anchor plus an
-    auto-incrementing suffix (DRAGEN, DRAGEN_3, ...) whose numbering depends
-    on the input file mix, so sections are resolved by content instead of by
-    positional key.
-
-    Args:
-        general_stats: The report_general_stats_data mapping from multiqc_data.json.
-        metric_keys: Metric names to resolve.
-
-    Returns:
-        Mapping of metric name to section key.
-
-    Raises:
-        ValueError: If any metric appears in zero or in more than one section.
-    """
-    errors: list[str] = []
-    section_by_metric: dict[str, str] = {}
-    for metric_key in metric_keys:
-        hits = [
-            section_key
-            for section_key, val_by_metric_by_sample in general_stats.items()
-            if any(metric_key in val_by_metric for val_by_metric in val_by_metric_by_sample.values())
-        ]
-        if len(hits) == 1:
-            section_by_metric[metric_key] = hits[0]
-        else:
-            errors.append(f'{metric_key!r} found in {len(hits)} sections {hits}')
-    if errors:
-        raise ValueError(
-            'Could not resolve MultiQC general-stats sections '
-            f'(available sections: {list(general_stats)}): ' + '; '.join(errors)
-        )
-    return section_by_metric
-
-
 def build_sg_multiqc_meta_dict(
     cohort_sgs: list[SequencingGroup], multiqc_json: dict[str, Any], sequencing_type: str
 ) -> dict[str, dict]:
@@ -237,6 +204,7 @@ def update_sg_qc_metrics(
     else:
         logger.warning(f'Failed samples: {failed_samples}')
     logger.info(f'meta to update: {meta_to_update}')
+    registered_by_sg: dict[str, dict[str, Any]] = {}
     for sg in cohort_sgs:
         sg_meta ={}
         sg_meta['qc'] = meta_to_update.get(sg.id, {})
@@ -254,7 +222,10 @@ def update_sg_qc_metrics(
         if swap_check_by_sg and sg.id in swap_check_by_sg:
             sg_meta['qc']['swap_check'] = swap_check_by_sg[sg.id]
         sg_meta['qc']['qc_checks_failed'] = failed_samples.get(sg.id, []) if sg.id in failed_samples else []
-        meta_to_send = {'qc': {**dict.fromkeys(null_keys), **sg_meta['qc']}}
+        # The one boundary where non-finite floats are removed: just before the mutation,
+        # so the sex-imputation and swap-check values merged above are covered too.
+        registered_by_sg[sg.id] = null_non_finite_floats(sg_meta['qc'], sg.id, 'qc')
+        meta_to_send = {'qc': {**dict.fromkeys(null_keys), **registered_by_sg[sg.id]}}
         logger.info(f'Updating SG {sg.id} with meta: {meta_to_send}')
         metamist_project = cohort.dataset.name
         if get_access_level() == 'test':
@@ -271,9 +242,9 @@ def update_sg_qc_metrics(
         )
         logger.info(f'Updated SG {sg.id}: {result_update_mutation}')
 
-    # Write out meta fields updated to json
+    # Write out the meta fields registered per SG (same values as sent, so no NaN)
     with output.open('w') as f:
-        json.dump(meta_to_update, f, indent=4)
+        json.dump(registered_by_sg, f, indent=4, allow_nan=False)
 
     # Deactivate sequencing groups that failed QC. Controls are excluded:
     # deactivating a control would archive the cohort it belongs to.

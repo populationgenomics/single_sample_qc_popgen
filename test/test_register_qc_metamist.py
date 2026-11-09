@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,11 +11,8 @@ import pytest
 
 from single_sample_qc_popgen import utils
 from single_sample_qc_popgen.jobs import register_qc_metamist
-from single_sample_qc_popgen.jobs.register_qc_metamist import (
-    build_sg_multiqc_meta_dict,
-    metric_map,
-    resolve_metric_sections,
-)
+from single_sample_qc_popgen.jobs.register_qc_metamist import build_sg_multiqc_meta_dict, metric_map
+from single_sample_qc_popgen.utils import null_non_finite_floats, resolve_metric_sections
 
 
 CONTAMINATION = 0.001
@@ -108,7 +106,7 @@ def test_resolve_metric_sections_is_immune_to_section_renumbering():
 
 def test_resolve_metric_sections_missing_metric_raises():
     general_stats = make_general_stats(['CPG000001'])
-    with pytest.raises(ValueError, match=r"'FREEMIX' found in 0 sections"):
+    with pytest.raises(ValueError, match=r"'FREEMIX' is in no section"):
         resolve_metric_sections(general_stats, ['FREEMIX'])
 
 
@@ -231,7 +229,7 @@ def test_build_sg_multiqc_meta_dict_exome_registers_target_region_values():
 def test_build_sg_multiqc_meta_dict_exome_on_genome_report_raises():
     general_stats = make_general_stats(['CPG000001'], 'genome')
     sgs = [SimpleNamespace(id='CPG000001')]
-    with pytest.raises(ValueError, match=r"'Average sequenced coverage over target region' found in 0 sections"):
+    with pytest.raises(ValueError, match=r"'Average sequenced coverage over target region' is in no section"):
         build_sg_multiqc_meta_dict(sgs, general_stats, 'exome')  # pyright: ignore[reportArgumentType]
 
 
@@ -247,16 +245,19 @@ def run_register(
     swap_check_path: str | None,
     sequencing_type: str = 'genome',
     drop_paths: frozenset[str] | set[str] = frozenset(),
+    sex_imputation: dict | None = None,
+    swap_check: dict | None = None,
 ) -> dict:
     """Runs register_qc_metamist.run against fakes; returns each SG's meta as sent to metamist.
 
-    Paths in drop_paths behave as missing files.
+    Paths in drop_paths behave as missing files. sex_imputation and swap_check replace
+    the default JSON served for CPG000001.
     """
     json_by_path = {
         'gs://bucket/multiqc.json': make_general_stats(['CPG000001'], sequencing_type),
         'gs://bucket/failures.json': {},
-        'gs://bucket/sex_imputation.json': {'CPG000001': {'f_stat_raw': F_STAT_RAW}},
-        SWAP_CHECK_PATH: SWAP_CHECK,
+        'gs://bucket/sex_imputation.json': sex_imputation or {'CPG000001': {'f_stat_raw': F_STAT_RAW}},
+        SWAP_CHECK_PATH: swap_check or SWAP_CHECK,
     }
     for path in drop_paths:
         del json_by_path[path]
@@ -354,3 +355,105 @@ def test_run_sends_null_for_other_type_coverage_keys(monkeypatch, tmp_path, sequ
     assert qc[other_type_key] is None
     assert all(value is not None for key, value in qc.items() if key != other_type_key)
     assert other_type_key not in json.loads((tmp_path / 'registered.json').read_text())['CPG000001']
+
+
+# --- non-finite floats ----------------------------------------------------
+
+
+def parse_json_without_non_finite(text: str) -> dict:
+    """json.loads that fails on NaN and Infinity, which strict JSON parsers reject."""
+
+    def fail(constant: str) -> None:
+        raise AssertionError(f'non-finite constant {constant} in JSON')
+
+    return json.loads(text, parse_constant=fail)
+
+
+def test_null_non_finite_floats_replaces_nan_and_inf_at_any_depth(warnings_logged):
+    value = {
+        'nan': math.nan,
+        'inf': math.inf,
+        'neg_inf': -math.inf,
+        'nested': {'deeper': {'nan': math.nan}},
+        'in_list': [1.0, math.nan, {'inf': math.inf}],
+    }
+
+    cleaned = null_non_finite_floats(value, 'CPG000001', 'qc')
+
+    assert cleaned == {
+        'nan': None,
+        'inf': None,
+        'neg_inf': None,
+        'nested': {'deeper': {'nan': None}},
+        'in_list': [1.0, None, {'inf': None}],
+    }
+    assert len(warnings_logged) == 6  # noqa: PLR2004
+    assert all('CPG000001' in message for message in warnings_logged)
+    assert any('qc.nested.deeper.nan' in message for message in warnings_logged)
+    assert any('qc.in_list[2].inf' in message for message in warnings_logged)
+    # The input is not mutated.
+    assert math.isnan(value['nan'])
+
+
+def test_null_non_finite_floats_leaves_finite_values_untouched(warnings_logged):
+    value = {'f': 0.9, 'zero': 0.0, 'neg': -1.5, 'int': 3, 'bool': False, 'str': 'nan', 'none': None, 'list': [1, 'a']}
+
+    assert null_non_finite_floats(value, 'CPG000001', 'qc') == value
+    assert warnings_logged == []
+
+
+def test_run_sends_null_for_nan_sex_imputation_and_warns(monkeypatch, tmp_path, warnings_logged):
+    # compute_f_stat returns NaN for both when somalier called no chrX sites.
+    sex_imputation = {'CPG000001': {'f_stat_raw': math.nan, 'x_het_rate': math.nan, 'n_called_x': 0, 'y_calls': 3}}
+
+    sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=None, sex_imputation=sex_imputation)
+
+    qc = sent_meta['CPG000001']['qc']
+    assert qc['f_stat_raw'] is None
+    assert qc['x_het_rate'] is None
+    assert qc['n_called_x'] == 0
+    assert qc['y_calls'] == 3  # noqa: PLR2004
+    assert qc['contamination_dragen'] == CONTAMINATION
+    assert any('CPG000001' in message and 'qc.f_stat_raw' in message for message in warnings_logged)
+    assert any('CPG000001' in message and 'qc.x_het_rate' in message for message in warnings_logged)
+    # Every value sent is strict-JSON serialisable, as the metamist client requires.
+    json.dumps(sent_meta, allow_nan=False)
+
+
+def test_run_sends_null_for_nested_non_finite_swap_check_value(monkeypatch, tmp_path, warnings_logged):
+    swap_check = {'CPG000001': {'status': 'no_match', 'best_relatedness': math.nan, 'worst_relatedness': math.inf}}
+
+    sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=SWAP_CHECK_PATH, swap_check=swap_check)
+
+    assert sent_meta['CPG000001']['qc']['swap_check'] == {
+        'status': 'no_match',
+        'best_relatedness': None,
+        'worst_relatedness': None,
+    }
+    assert any('qc.swap_check.best_relatedness' in message for message in warnings_logged)
+    assert any('qc.swap_check.worst_relatedness' in message for message in warnings_logged)
+    json.dumps(sent_meta, allow_nan=False)
+
+
+def test_run_registered_output_json_has_no_nan(monkeypatch, tmp_path):
+    sex_imputation = {'CPG000001': {'f_stat_raw': math.nan, 'x_het_rate': math.nan}}
+    swap_check = {'CPG000001': {'status': 'no_match', 'best_relatedness': math.nan}}
+
+    run_register(
+        monkeypatch, tmp_path, swap_check_path=SWAP_CHECK_PATH, sex_imputation=sex_imputation, swap_check=swap_check
+    )
+
+    registered = parse_json_without_non_finite((tmp_path / 'registered.json').read_text())['CPG000001']
+    assert registered['f_stat_raw'] is None
+    assert registered['x_het_rate'] is None
+    assert registered['swap_check']['best_relatedness'] is None
+    assert registered['contamination_dragen'] == CONTAMINATION
+
+
+def test_run_leaves_finite_values_and_logs_no_warning(monkeypatch, tmp_path, warnings_logged):
+    sent_meta = run_register(monkeypatch, tmp_path, swap_check_path=SWAP_CHECK_PATH)
+
+    qc = sent_meta['CPG000001']['qc']
+    assert qc['f_stat_raw'] == F_STAT_RAW
+    assert qc['swap_check'] == SWAP_CHECK['CPG000001']
+    assert not any('non-finite' in message for message in warnings_logged)

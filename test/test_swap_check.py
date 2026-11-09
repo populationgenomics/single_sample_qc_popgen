@@ -446,14 +446,15 @@ def fake_version_config(values: dict[tuple[str, ...], str]) -> Any:
     return fake
 
 
-def test_qc_stages_default_to_v3_and_swap_check_stages_to_v1(monkeypatch):
+def test_qc_stage_defaults_and_swap_check_stages_to_v1(monkeypatch):
     # v1 exome MultiQC JSONs lack target_bed_* metrics; v1 CheckMultiQc failures predate
-    # per-sequencing-type thresholds; v1 registrations predate the swap check.
+    # per-sequencing-type thresholds; v1 registrations predate the swap check; v3 checks
+    # skipped missing values, and v3 registrations could carry NaN.
     monkeypatch.setattr(stages, 'config_retrieve', fake_version_config({}))
 
     assert stages.resolve_stage_version('RunMultiQc') == 'v3'
-    assert stages.resolve_stage_version('CheckMultiQc') == 'v3'
-    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v3'
+    assert stages.resolve_stage_version('CheckMultiQc') == 'v4'
+    assert stages.resolve_stage_version('RegisterQcMetricsToMetamist') == 'v4'
     assert stages.resolve_stage_version('SwapCheckClassify') == 'v1'
 
 

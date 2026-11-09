@@ -1,4 +1,5 @@
 import json
+import math
 from typing import Any
 
 import cpg_utils
@@ -103,3 +104,75 @@ def load_json(path: cpg_utils.Path | str, extract_key: str | None = None, allow_
         return data.get(extract_key, {})
 
     return data
+
+
+def null_non_finite_floats(value: Any, sg_id: str, path: str) -> Any:
+    """Returns value with every NaN or +/-inf float, at any depth, replaced by None.
+
+    The metamist client serialises with requests, which raises InvalidJSONError
+    ("Out of range float values are not JSON compliant") on NaN or inf, and the
+    job would die part-way through the cohort. None is JSON null, which
+    metamist's JSON_MERGE_PATCH treats as "remove key": correct for a value
+    that could not be computed (e.g. f_stat_raw when somalier called no chrX
+    sites), because it also clears a stale value from an earlier run.
+
+    Each replacement is logged as a WARNING naming the SG and the key path.
+
+    Args:
+        value: A scalar, or dicts and lists nested to any depth.
+        sg_id: The sequencing group the value belongs to, for the log.
+        path: Dotted key path of value so far, for the log.
+
+    Returns:
+        A copy with the replacements made; containers are rebuilt, not mutated.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        logger.warning(f'SG {sg_id}: sending null instead of non-finite value {value} at {path}')
+        return None
+    if isinstance(value, dict):
+        return {key: null_non_finite_floats(item, sg_id, f'{path}.{key}') for key, item in value.items()}
+    if isinstance(value, list):
+        return [null_non_finite_floats(item, sg_id, f'{path}[{i}]') for i, item in enumerate(value)]
+    return value
+
+
+def resolve_metric_sections(general_stats: dict[str, Any], metric_keys: list[str]) -> dict[str, str]:
+    """Maps each metric name to the single general-stats section containing it.
+
+    MultiQC keys report_general_stats_data by module anchor plus an
+    auto-incrementing suffix (DRAGEN, DRAGEN_3, ...) whose numbering depends
+    on the input file mix, so sections are resolved by content instead of by
+    positional key.
+
+    Args:
+        general_stats: The report_general_stats_data mapping from multiqc_data.json.
+        metric_keys: Metric names to resolve.
+
+    Returns:
+        Mapping of metric name to section key.
+
+    Raises:
+        ValueError: If any metric appears in zero or in more than one section.
+    """
+    errors: list[str] = []
+    section_by_metric: dict[str, str] = {}
+    for metric_key in metric_keys:
+        hits = [
+            section_key
+            for section_key, val_by_metric_by_sample in general_stats.items()
+            if any(metric_key in val_by_metric for val_by_metric in val_by_metric_by_sample.values())
+        ]
+        if len(hits) == 1:
+            section_by_metric[metric_key] = hits[0]
+        elif not hits:
+            # Absent for every sample: the wrong report or sequencing-type profile, not a sample
+            # lacking a value, and nothing could be checked or registered for this metric.
+            errors.append(f'{metric_key!r} is in no section (wrong report or sequencing-type profile?)')
+        else:
+            errors.append(f'{metric_key!r} found in {len(hits)} sections {hits}')
+    if errors:
+        raise ValueError(
+            'Could not resolve MultiQC general-stats sections '
+            f'(available sections: {list(general_stats)}): ' + '; '.join(errors)
+        )
+    return section_by_metric

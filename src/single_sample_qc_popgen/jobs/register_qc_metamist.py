@@ -4,7 +4,6 @@ Options to deactivate sequencing groups that failed QC.
 """
 
 import json
-import math
 from typing import Any
 
 import cpg_utils
@@ -14,7 +13,12 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import OURDNA_CONTROL, SEQUENCING_TYPE_PROFILES, get_sequencing_type_profile
-from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
+from single_sample_qc_popgen.utils import (
+    get_cohort_sequencing_type,
+    load_json,
+    null_non_finite_floats,
+    resolve_metric_sections,
+)
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -140,44 +144,6 @@ def metric_map(sequencing_type: str) -> list[tuple[str, str]]:
     ]
 
 
-def resolve_metric_sections(general_stats: dict[str, Any], metric_keys: list[str]) -> dict[str, str]:
-    """Maps each metric name to the single general-stats section containing it.
-
-    MultiQC keys report_general_stats_data by module anchor plus an
-    auto-incrementing suffix (DRAGEN, DRAGEN_3, ...) whose numbering depends
-    on the input file mix, so sections are resolved by content instead of by
-    positional key.
-
-    Args:
-        general_stats: The report_general_stats_data mapping from multiqc_data.json.
-        metric_keys: Metric names to resolve.
-
-    Returns:
-        Mapping of metric name to section key.
-
-    Raises:
-        ValueError: If any metric appears in zero or in more than one section.
-    """
-    errors: list[str] = []
-    section_by_metric: dict[str, str] = {}
-    for metric_key in metric_keys:
-        hits = [
-            section_key
-            for section_key, val_by_metric_by_sample in general_stats.items()
-            if any(metric_key in val_by_metric for val_by_metric in val_by_metric_by_sample.values())
-        ]
-        if len(hits) == 1:
-            section_by_metric[metric_key] = hits[0]
-        else:
-            errors.append(f'{metric_key!r} found in {len(hits)} sections {hits}')
-    if errors:
-        raise ValueError(
-            'Could not resolve MultiQC general-stats sections '
-            f'(available sections: {list(general_stats)}): ' + '; '.join(errors)
-        )
-    return section_by_metric
-
-
 def build_sg_multiqc_meta_dict(
     cohort_sgs: list[SequencingGroup], multiqc_json: dict[str, Any], sequencing_type: str
 ) -> dict[str, dict]:
@@ -211,36 +177,6 @@ def build_sg_multiqc_meta_dict(
         extracted_data[sg.id] = sample_metrics
 
     return extracted_data
-
-def null_non_finite_floats(value: Any, sg_id: str, path: str) -> Any:
-    """Returns value with every NaN or +/-inf float, at any depth, replaced by None.
-
-    The metamist client serialises with requests, which raises InvalidJSONError
-    ("Out of range float values are not JSON compliant") on NaN or inf, and the
-    job would die part-way through the cohort. None is JSON null, which
-    metamist's JSON_MERGE_PATCH treats as "remove key": correct for a value
-    that could not be computed (e.g. f_stat_raw when somalier called no chrX
-    sites), because it also clears a stale value from an earlier run.
-
-    Each replacement is logged as a WARNING naming the SG and the key path.
-
-    Args:
-        value: A scalar, or dicts and lists nested to any depth.
-        sg_id: The sequencing group the value belongs to, for the log.
-        path: Dotted key path of value so far, for the log.
-
-    Returns:
-        A copy with the replacements made; containers are rebuilt, not mutated.
-    """
-    if isinstance(value, float) and not math.isfinite(value):
-        logger.warning(f'SG {sg_id}: sending null instead of non-finite value {value} at {path}')
-        return None
-    if isinstance(value, dict):
-        return {key: null_non_finite_floats(item, sg_id, f'{path}.{key}') for key, item in value.items()}
-    if isinstance(value, list):
-        return [null_non_finite_floats(item, sg_id, f'{path}[{i}]') for i, item in enumerate(value)]
-    return value
-
 
 def update_sg_qc_metrics(
         failed_samples: dict[str, list[str]],

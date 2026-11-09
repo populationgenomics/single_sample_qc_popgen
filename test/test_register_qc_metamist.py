@@ -11,12 +11,8 @@ import pytest
 
 from single_sample_qc_popgen import utils
 from single_sample_qc_popgen.jobs import register_qc_metamist
-from single_sample_qc_popgen.jobs.register_qc_metamist import (
-    build_sg_multiqc_meta_dict,
-    metric_map,
-    null_non_finite_floats,
-    resolve_metric_sections,
-)
+from single_sample_qc_popgen.jobs.register_qc_metamist import build_sg_multiqc_meta_dict, metric_map
+from single_sample_qc_popgen.utils import null_non_finite_floats, resolve_metric_sections
 
 
 CONTAMINATION = 0.001
@@ -110,7 +106,7 @@ def test_resolve_metric_sections_is_immune_to_section_renumbering():
 
 def test_resolve_metric_sections_missing_metric_raises():
     general_stats = make_general_stats(['CPG000001'])
-    with pytest.raises(ValueError, match=r"'FREEMIX' found in 0 sections"):
+    with pytest.raises(ValueError, match=r"'FREEMIX' is in no section"):
         resolve_metric_sections(general_stats, ['FREEMIX'])
 
 
@@ -233,7 +229,7 @@ def test_build_sg_multiqc_meta_dict_exome_registers_target_region_values():
 def test_build_sg_multiqc_meta_dict_exome_on_genome_report_raises():
     general_stats = make_general_stats(['CPG000001'], 'genome')
     sgs = [SimpleNamespace(id='CPG000001')]
-    with pytest.raises(ValueError, match=r"'Average sequenced coverage over target region' found in 0 sections"):
+    with pytest.raises(ValueError, match=r"'Average sequenced coverage over target region' is in no section"):
         build_sg_multiqc_meta_dict(sgs, general_stats, 'exome')  # pyright: ignore[reportArgumentType]
 
 

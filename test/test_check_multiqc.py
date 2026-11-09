@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
+import re
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +13,6 @@ from typing import Any
 
 import pytest
 
-from single_sample_qc_popgen.constants import get_sequencing_type_profile
 from single_sample_qc_popgen.jobs import check_multiqc
 from single_sample_qc_popgen.jobs.check_multiqc import (
     QCChecker,
@@ -19,7 +20,6 @@ from single_sample_qc_popgen.jobs.check_multiqc import (
     ReportedSexInfo,
     build_qc_thresholds,
     check_cohort_metrics,
-    check_threshold_metrics_in_report,
     generate_slack_message,
     get_reported_sex_info,
     resolve_reported_sex,
@@ -208,28 +208,6 @@ def test_build_qc_thresholds_shipped_default_config_builds(monkeypatch, make_qc_
         assert set(thresholds) == set(default_config['qc_thresholds'][seq_type].get(config_key, {}))
 
 
-# --- check_threshold_metrics_in_report ----------------------------------
-
-
-GENOME_ONLY_STATS = {'DRAGEN': {'CPG000001': {get_sequencing_type_profile('genome').median_coverage.multiqc_name: 2.6}}}
-
-
-def test_check_threshold_metrics_in_report_raises_when_metric_in_no_section(monkeypatch, make_qc_checker):
-    set_qc_thresholds(monkeypatch, {'exome': {'min': {'median_coverage': EXOME_MEDIAN_COVERAGE_THRESHOLD}}})
-    threshold_map = build_qc_thresholds('exome', 'min', make_qc_checker('exome'))
-
-    with pytest.raises(RuntimeError, match='target bed median autosomal coverage over target region'):
-        check_threshold_metrics_in_report(threshold_map, GENOME_ONLY_STATS)
-
-
-def test_check_threshold_metrics_in_report_passes_when_only_some_samples_lack_metric(monkeypatch, make_qc_checker):
-    set_qc_thresholds(monkeypatch, {'genome': {'min': {'median_coverage': GENOME_MEDIAN_COVERAGE_THRESHOLD}}})
-    threshold_map = build_qc_thresholds('genome', 'min', make_qc_checker('genome'))
-    stats = {'DRAGEN': {**GENOME_ONLY_STATS['DRAGEN'], 'CPG000002': {}}}
-
-    check_threshold_metrics_in_report(threshold_map, stats)
-
-
 # --- check_cohort_metrics -------------------------------------------------
 
 MAPPING_RATE_THRESHOLD = 80
@@ -393,9 +371,12 @@ def test_check_cohort_metrics_chimera_with_nan_input_fails_as_missing(monkeypatc
     assert results.bad_lines_by_sample == {SG_B: ['Chimera Rate missing']}
 
 
-def test_check_cohort_metrics_unknown_ploidy_with_known_sex_fails_as_missing(monkeypatch, make_qc_checker):
+@pytest.mark.parametrize('raw_ploidy', ['Unknown', math.nan, ''], ids=['unknown', 'nan', 'empty'])
+def test_check_cohort_metrics_unusable_ploidy_with_known_sex_fails_as_missing(
+    monkeypatch, make_qc_checker, raw_ploidy
+):
     stats = make_stats((SG_A, SG_B))
-    stats['DRAGEN_2'][SG_B]['Ploidy estimation'] = 'Unknown'
+    stats['DRAGEN_2'][SG_B]['Ploidy estimation'] = raw_ploidy
 
     results = run_checks(monkeypatch, make_qc_checker, stats)
 
@@ -513,7 +494,8 @@ def test_check_cohort_metrics_controls_without_sex_are_not_listed(monkeypatch, m
 
 
 def test_check_cohort_metrics_reported_sex_is_ignored_when_ploidy_is_not_thresholded(monkeypatch, make_qc_checker):
-    # Exome defaults set no ploidy threshold; reported sex is then unused, so it cannot fail or be listed.
+    # Without a ploidy threshold, reported sex is unused: discordance is only logged (by get_reported_sex_info),
+    # so it cannot fail or be listed.
     thresholds = {'genome': {'min': {'mapping_rate_pct': MAPPING_RATE_THRESHOLD}}}
     discordant_line = 'Reported sex discordant (participant_portal_reported_sex=0, reportedSex=1)'
 
@@ -554,7 +536,7 @@ def test_check_cohort_metrics_metric_absent_from_whole_report_raises(monkeypatch
     for val_by_metric in stats[section].values():
         del val_by_metric[metric]
 
-    with pytest.raises(RuntimeError, match=metric.replace('(', r'\(').replace(')', r'\)')):
+    with pytest.raises(ValueError, match=re.escape(f'{metric!r} is in no section')):
         run_checks(monkeypatch, make_qc_checker, stats)
 
 
@@ -644,6 +626,8 @@ def test_get_reported_sex_info_reads_both_fields_per_sg(monkeypatch, warnings_lo
     assert any('CPG2' in message and 'fallback' in message for message in warnings_logged)
     assert any('CPG6' in message and 'fallback' in message for message in warnings_logged)
     assert not any('CPG1:' in message for message in warnings_logged)
+    # Discordance is logged where it is found, whatever thresholds are configured.
+    assert any('CPG3' in message and 'Reported sex discordant' in message for message in warnings_logged)
 
 
 # --- Slack message --------------------------------------------------------
@@ -689,3 +673,66 @@ def test_generate_slack_message_keeps_control_failures_in_their_own_block():
     assert 'CPG2' not in text.split('— Controls —')[0]
     # Controls are out of both sides of the failure rate: 1 real failure among 6 real SGs.
     assert '*Failure Rate:* 1 out of 6 samples' in text
+
+
+def test_write_sex_imputation_to_json_writes_null_for_nan(tmp_path, warnings_logged):
+    # No chrX sites called: compute_f_stat returns NaN, which must not reach the file.
+    output = tmp_path / 'sex_imputation.json'
+    record = {'f_stat_raw': math.nan, 'x_het_rate': math.nan, 'n_called_x': 0, 'y_calls': 0, 'y_n': 17}
+
+    check_multiqc.write_sex_imputation_to_json({'CPG000001': record}, output)
+
+    text = output.read_text()
+    assert 'NaN' not in text
+    assert json.loads(text) == {
+        'CPG000001': {'f_stat_raw': None, 'x_het_rate': None, 'n_called_x': 0, 'y_calls': 0, 'y_n': 17}
+    }
+    assert any('sex_imputation.f_stat_raw' in message for message in warnings_logged)
+
+
+def portal_only_response(portal_sex: Any, reported_sex: Any) -> dict:
+    """One SG whose participant has the given portal and reportedSex values."""
+    participant = {'reportedSex': reported_sex, 'meta': {PORTAL: portal_sex}}
+    sg = {'id': 'CPG1', 'sample': {'externalId': 'S', 'participant': participant}}
+    return {'cohorts': [{'sequencingGroups': [sg]}]}
+
+
+@pytest.mark.parametrize(
+    ('portal_sex', 'reported_sex', 'expected_sex', 'expected_discordant'),
+    [
+        ('1', 1, 1, None),
+        ('2', 1, None, f'Reported sex discordant ({PORTAL}=2, reportedSex=1)'),
+    ],
+)
+def test_get_reported_sex_info_casts_portal_sex_to_int(
+    monkeypatch, portal_sex, reported_sex, expected_sex, expected_discordant
+):
+    response = portal_only_response(portal_sex, reported_sex)
+    monkeypatch.setattr(check_multiqc, 'query', lambda _query, variables: response)  # noqa: ARG005
+
+    info = get_reported_sex_info(SimpleNamespace(id='COH0001'))  # pyright: ignore[reportArgumentType]
+
+    assert info.sex_by_sg.get('CPG1') == expected_sex
+    assert info.discordant_by_sg.get('CPG1') == expected_discordant
+
+
+@pytest.mark.parametrize(('portal_sex', 'reported_sex'), [('', 1), ('M', None)])
+def test_get_reported_sex_info_raises_on_non_integer_portal_sex(monkeypatch, portal_sex, reported_sex):
+    response = portal_only_response(portal_sex, reported_sex)
+    monkeypatch.setattr(check_multiqc, 'query', lambda _query, variables: response)  # noqa: ARG005
+
+    with pytest.raises(ValueError, match=f"SG CPG1: {PORTAL} is {portal_sex!r}"):
+        get_reported_sex_info(SimpleNamespace(id='COH0001'))  # pyright: ignore[reportArgumentType]
+
+
+def test_generate_slack_message_caps_ploidy_not_checked_ids():
+    sg_ids = [f'CPG{i:06d}' for i in range(500)]
+
+    text = generate_slack_message({}, make_slack_checker(set()), 'https://example/report.html', sg_ids)
+
+    line = next(line for line in text.splitlines() if 'Ploidy not checked' in line)
+    assert line == (
+        'ℹ️ Ploidy not checked (no reported sex): 500 SGs: '  # noqa: RUF001
+        + ', '.join(sg_ids[:10])
+        + ', … (full list in the CheckMultiQc log)'
+    )

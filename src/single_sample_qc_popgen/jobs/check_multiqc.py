@@ -23,9 +23,13 @@ from loguru import logger
 from metamist.graphql import gql, query
 
 from single_sample_qc_popgen.constants import FAILURE_RATE_THRESHOLD, OURDNA_CONTROL, get_sequencing_type_profile
-from single_sample_qc_popgen.jobs.register_qc_metamist import resolve_metric_sections
 from single_sample_qc_popgen.jobs.sex_imputation import impute_sex_for_cohort
-from single_sample_qc_popgen.utils import get_cohort_sequencing_type, load_json
+from single_sample_qc_popgen.utils import (
+    get_cohort_sequencing_type,
+    load_json,
+    null_non_finite_floats,
+    resolve_metric_sections,
+)
 
 REPORTED_SEX_QUERY = gql(
     """
@@ -80,6 +84,8 @@ USABLE_SEX_CODES: Final = (1, 2)
 
 # MultiQC general-stats metric names that the ploidy and chimera calculators read.
 PLOIDY_ESTIMATION: Final = 'Ploidy estimation'
+# The Slack 'Ploidy not checked' line lists at most this many SG IDs; the log has them all.
+SLACK_MAX_LISTED_SGS: Final = 10
 CHIMERIC_ALIGNMENTS: Final = 'Supplementary (chimeric) alignments'
 TOTAL_ALIGNMENTS: Final = 'Total alignments'
 
@@ -114,7 +120,7 @@ def resolve_reported_sex(portal_sex: int | None, reported_sex: int | None) -> tu
     """
     if portal_sex is not None and reported_sex is not None and portal_sex != reported_sex:
         return None, (
-            f'Reported sex discordant ({PORTAL_SEX_FIELD}={portal_sex}, {REPORTED_SEX_FIELD}={reported_sex})'
+            f'Reported sex discordant ({PORTAL_SEX_FIELD}={portal_sex!r}, {REPORTED_SEX_FIELD}={reported_sex!r})'
         )
     sex = portal_sex if portal_sex is not None else reported_sex
     return (sex if sex in USABLE_SEX_CODES else None), None
@@ -141,6 +147,15 @@ def get_reported_sex_info(cohort: Cohort) -> ReportedSexInfo:
             participant_meta = participant.get('meta')
             portal_sex = participant_meta.get(PORTAL_SEX_FIELD) if isinstance(participant_meta, dict) else None
             reported_sex = participant.get(REPORTED_SEX_FIELD)
+            if portal_sex is not None:
+                # reportedSex is int | None in metamist, but the portal field is free JSON in
+                # participant meta: compare as int, so '1' against 1 is not read as discordant.
+                try:
+                    portal_sex = int(portal_sex)
+                except (TypeError, ValueError) as e:
+                    raise ValueError(
+                        f'SG {sg_id}: {PORTAL_SEX_FIELD} is {portal_sex!r}, not an integer sex code'
+                    ) from e
             if portal_sex is None and reported_sex is not None:
                 logger.warning(
                     f"SG {sg_id}: Preferred field '{PORTAL_SEX_FIELD}' "
@@ -150,6 +165,8 @@ def get_reported_sex_info(cohort: Cohort) -> ReportedSexInfo:
             if sex is not None:
                 sex_by_sg[sg_id] = sex
             if discordant_line is not None:
+                # Logged whether or not a ploidy threshold makes it a QC failure.
+                logger.warning(f'SG {sg_id}: {discordant_line}')
                 discordant_by_sg[sg_id] = discordant_line
     return ReportedSexInfo(sex_by_sg=sex_by_sg, discordant_by_sg=discordant_by_sg, control_sg_ids=control_sg_ids)
 
@@ -279,7 +296,9 @@ class QCChecker:
         if expected_sex_num not in USABLE_SEX_CODES:
             raise ValueError(f'{sg_id} has no usable reported sex ({expected_sex_num!r}); cannot check its ploidy')
 
-        if raw_ploidy == 'Unknown':
+        # No usable DRAGEN call: 'Unknown', or a non-string or empty value. None here is
+        # reported as '<display name> missing'.
+        if not isinstance(raw_ploidy, str) or raw_ploidy in ('', 'Unknown'):
             return None, raw_ploidy, str(expected_sex_num)
 
         expected_ploidy = 'XY' if expected_sex_num == 1 else 'XX'
@@ -354,28 +373,6 @@ def metric_input_names(metric_config: dict[str, Any]) -> list[str]:
     if 'input_metric_names' in metric_config:
         return metric_config['input_metric_names']
     return [metric_config['multiqc_report_name']]
-
-
-def check_threshold_metrics_in_report(threshold_map: dict[str, dict[str, Any]], multiqc_data: dict) -> None:
-    """Raises RuntimeError if a metric a threshold reads is in no general-stats section.
-
-    A metric absent from the whole report means the wrong report or profile,
-    not a sample lacking a value, and its threshold would never be applied.
-    For calculated metrics this covers the raw metrics the calculator reads.
-    """
-    missing = sorted(
-        {
-            name
-            for metric_config in threshold_map.values()
-            for name in metric_input_names(metric_config)
-            if not any(name in val_by_metric for section in multiqc_data.values() for val_by_metric in section.values())
-        }
-    )
-    if missing:
-        raise RuntimeError(
-            f'Thresholded metrics missing from every MultiQC general-stats section: {missing}. '
-            f'Sections present: {list(multiqc_data)}'
-        )
 
 
 def get_metric_inputs(
@@ -464,8 +461,13 @@ def write_sex_imputation_to_json(
     logger.info(
         f'Writing {len(sex_imputation_by_sg)} sex-imputation record(s) to {output}',
     )
+    # f_stat_raw and x_het_rate are NaN when somalier called no chrX sites; write
+    # them as null so the file is strict JSON, and fail loudly on any other NaN.
+    cleaned = {
+        sg_id: null_non_finite_floats(record, sg_id, 'sex_imputation') for sg_id, record in sex_imputation_by_sg.items()
+    }
     with to_path(output).open('w') as f:
-        json.dump(sex_imputation_by_sg, f, indent=4)
+        json.dump(cleaned, f, indent=4, allow_nan=False)
 
 def generate_slack_message(
     bad_lines_by_sample: dict[str, list[str]],
@@ -520,9 +522,11 @@ def generate_slack_message(
 
     # 3. Informational: SGs whose ploidy could not be checked for lack of a reported sex
     if ploidy_not_checked:
+        listed = ', '.join(ploidy_not_checked[:SLACK_MAX_LISTED_SGS])
+        if len(ploidy_not_checked) > SLACK_MAX_LISTED_SGS:
+            listed += ', … (full list in the CheckMultiQc log)'
         messages.append(
-            f'ℹ️ Ploidy not checked (no reported sex): {len(ploidy_not_checked)} SGs: '  # noqa: RUF001
-            + ', '.join(ploidy_not_checked)
+            f'ℹ️ Ploidy not checked (no reported sex): {len(ploidy_not_checked)} SGs: {listed}'  # noqa: RUF001
         )
 
     # 4. Informational control block
@@ -628,17 +632,15 @@ def check_cohort_metrics(qc_checker: QCChecker, seq_type: str) -> QCResults:
     Both only apply when a threshold on a metric needing the reported sex is configured.
 
     Raises:
-        RuntimeError: If a thresholded metric is in no MultiQC section, or there are
-            no thresholds for seq_type (see build_qc_thresholds).
-        ValueError: If a thresholded metric is in more than one MultiQC section.
+        RuntimeError: If there are no thresholds for seq_type (see build_qc_thresholds).
+        ValueError: If a metric a threshold reads (including calculator inputs) is in no
+            MultiQC section, which means the wrong report or profile, or is in more than one.
     """
     multiqc_data = qc_checker.multiqc_data
     threshold_maps = {
         check_definition[0]: build_qc_thresholds(seq_type, check_definition[0], qc_checker)
         for check_definition in CHECK_DEFINITIONS
     }
-    for threshold_map in threshold_maps.values():
-        check_threshold_metrics_in_report(threshold_map, multiqc_data)
     section_by_metric = resolve_metric_sections(
         multiqc_data,
         sorted(
